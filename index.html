@@ -204,7 +204,7 @@
 
   <div class="toolbar" id="toolbar">
         <button id='toggleRed' class='btn'>🔴 Червоні</button><button id='wmToggleBtn2' class='btn'>💧</button>
-     <button id="toolCalc" class="btn" title="Калькулятор">🧮 Калькулятор</button>
+    <button id="toolCalc" class="btn" title="Калькулятор">🧮 Калькулятор</button>
     <div class="calc-speed-input" style="display:inline-flex;align-items:center;margin-left:6px;">
       <input id="calcSpeed" type="number" placeholder="км/год" style="width:100px;padding:6px;border-radius:6px;border:1px solid #d0d5dd;font-size:13px;" />
     </div>
@@ -1236,9 +1236,6 @@ document.getElementById('toggleCourse').onclick=()=>{
   <button class="mtb-btn" id="mobileRedBtn" title="Червоні">🔴</button>
   <button class="mtb-btn" id="mobileThemeBtn" title="Тема">🌙</button>
 
-
-
-
   <button class="mtb-btn" data-tool="uav:fpv" title="FPV"><img src="assets/fpv.png" width="28" alt="fpv"></button>
   <button class="mtb-btn" data-tool="uav:gerbera" title="Gerbera"><img src="assets/gerbera.png" width="28" alt="gerbera"></button>
   <button class="mtb-btn" data-tool="uav:italmas" title="Italmas"><img src="assets/italmas.png" width="28" alt="italmas"></button>
@@ -1259,6 +1256,10 @@ document.getElementById('toggleCourse').onclick=()=>{
   <button class="mtb-btn" data-tool="plane:sy34" title="Su-34"><img src="assets/sy34.png" width="28" alt="sy34"></button>
   <button class="mtb-btn" data-tool="plane:mig29" title="Mig-29"><img src="assets/mig29.png" width="28" alt="mig29"></button>
   <button class="mtb-btn" data-tool="plane:mig31" title="Mig-31"><img src="assets/mig31.png" width="28" alt="mig31"></button>
+</div>
+  <input id="mobileSearch" type="search" placeholder="Пошук..." style="min-width:160px;padding:8px;border-radius:8px;border:1px solid #ddd;flex:0 0 auto;" />
+  <button class="mtb-btn" id="mobileSearchBtn" title="Знайти">🔎</button>
+</div>
 
 <!-- Bottom drawer with course/len/count and actions -->
 <div id="mobileDrawer" role="region" aria-label="controls">
@@ -1275,12 +1276,14 @@ document.getElementById('toggleCourse').onclick=()=>{
       <input id="mobileHeading" type="range" min="0" max="359" value="0" />
       <span id="mobileHeadingVal" class="small">0°</span>
     </div>
-        <div class="drawer-row">
+    <div class="drawer-row">
+         </div>
+    <div class="drawer-row">
       <label class="small">Кількість</label>
       <input id="mobileCount" type="number" min="1" value="1" style="width:80px" />
       <button id="mobileHold" class="control-btn">🔓 Тримати</button>
     </div>
-    <div class="drawer-row">    
+    <div class="drawer-row">
       <button id="mobileDelete" class="control-btn">Видалити</button>
       <button id="mobileClear" class="control-btn">Очистити</button>
       <span style="margin-left:auto" class="small">Обраний: <span id="mobileSelected">—</span></span>
