@@ -1,0 +1,2740 @@
+<!DOCTYPE html>
+<html lang="uk">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Leaflet: Україна + мітки + пошук</title>
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" crossorigin="" />
+
+
+
+  <!-- Firebase Auth -->
+  <script type="module">
+    import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-app.js";
+    import { getAuth, signInWithEmailAndPassword, onAuthStateChanged, signOut }
+      from "https://www.gstatic.com/firebasejs/10.12.0/firebase-auth.js";
+
+    const firebaseConfig = {
+      apiKey: "AIzaSyBC06miFDEZoPMjifZJGyASZJ7h-qq7QWE",
+      authDomain: "sokolcarta.firebaseapp.com",
+      projectId: "sokolcarta",
+      storageBucket: "sokolcarta.firebasestorage.app",
+      messagingSenderId: "128255233343",
+      appId: "1:128255233343:web:7d009902a48a74d253578a",
+      measurementId: "G-ZYWM4QR9Y1"
+    };
+
+    const app  = initializeApp(firebaseConfig);
+    const auth = getAuth(app);
+
+    // Захист: безперервна перевірка кожні 2 секунди
+    // Якщо authScreen видалено з DOM — сторінка перезавантажується
+    function startGuard(){
+      setInterval(()=>{
+        const screen = document.getElementById('authScreen');
+        const isAuthed = window.__firebaseAuthed === true;
+        if(!isAuthed){
+          // якщо не авторизований і authScreen зник з DOM або прихований — перезавантаження
+          if(!screen || screen.style.display === 'none' || !document.body.contains(screen)){
+            location.reload();
+          }
+        }
+      }, 1500);
+    }
+
+    window.__firebaseAuthed = false;
+
+    onAuthStateChanged(auth, user => {
+      if(user){
+        window.__firebaseAuthed = true;
+        const screen = document.getElementById('authScreen');
+        if(screen) screen.style.display = 'none';
+        const btn = document.getElementById('logoutBtn');
+        if(btn) btn.style.display = 'block';
+        const em = document.getElementById('authUserEmail');
+        if(em) em.textContent = user.email;
+        if(window.map) window.map.invalidateSize();
+      } else {
+        window.__firebaseAuthed = false;
+        const screen = document.getElementById('authScreen');
+        if(screen) screen.style.display = 'flex';
+        const btn = document.getElementById('logoutBtn');
+        if(btn) btn.style.display = 'none';
+      }
+    });
+
+    startGuard();
+
+    window.__firebaseLogin = async function(){
+      const email = document.getElementById('authEmail').value.trim();
+      const pass  = document.getElementById('authPass').value;
+      const errEl = document.getElementById('authError');
+      errEl.textContent = '';
+      if(!email || !pass){ errEl.textContent = 'Введіть логін і пароль'; return; }
+      try{
+        document.getElementById('authSubmit').disabled = true;
+        await signInWithEmailAndPassword(auth, email, pass);
+      } catch(e){
+        document.getElementById('authSubmit').disabled = false;
+        const msgs = {
+          'auth/invalid-credential':     'Невірний логін або пароль',
+          'auth/user-not-found':         'Користувача не знайдено',
+          'auth/wrong-password':         'Невірний пароль',
+          'auth/too-many-requests':      'Забагато спроб. Спробуйте пізніше',
+          'auth/invalid-email':          'Невірний формат email',
+          'auth/network-request-failed': 'Помилка мережі',
+        };
+        errEl.textContent = msgs[e.code] || ('Помилка: ' + e.message);
+      }
+    };
+
+    window.__firebaseLogout = async function(){
+      window.__firebaseAuthed = false;
+      await signOut(auth);
+    };
+
+    window.addEventListener('load', ()=>{
+      document.getElementById('authPass')?.addEventListener('keydown', e=>{
+        if(e.key === 'Enter') window.__firebaseLogin();
+      });
+      document.getElementById('authEmail')?.addEventListener('keydown', e=>{
+        if(e.key === 'Enter') document.getElementById('authPass').focus();
+      });
+    });
+  </script>
+
+  <style>
+    /* AUTH SCREEN */
+    #authScreen {
+      display: flex;
+      position: fixed;
+      inset: 0;
+      z-index: 999999;
+      background: #0f172a;
+      align-items: center;
+      justify-content: center;
+      font-family: system-ui, sans-serif;
+      pointer-events: all;
+    }
+    .auth-box {
+      background: #1e293b;
+      border-radius: 16px;
+      padding: 36px 40px;
+      width: 340px;
+      box-shadow: 0 20px 60px rgba(0,0,0,0.6);
+      display: flex;
+      flex-direction: column;
+      gap: 14px;
+    }
+    .auth-box h2 {
+      margin: 0 0 4px;
+      color: #f1f5f9;
+      font-size: 22px;
+      text-align: center;
+      letter-spacing: .5px;
+    }
+    .auth-box .auth-logo {
+      text-align: center;
+      font-size: 40px;
+      margin-bottom: 4px;
+    }
+    .auth-box input {
+      background: #0f172a;
+      border: 1px solid #334155;
+      border-radius: 8px;
+      color: #f1f5f9;
+      padding: 10px 14px;
+      font-size: 15px;
+      outline: none;
+      transition: border-color .2s;
+    }
+    .auth-box input:focus { border-color: #6366f1; }
+    .auth-box input::placeholder { color: #64748b; }
+    .auth-box button#authSubmit {
+      background: #6366f1;
+      color: #fff;
+      border: none;
+      border-radius: 8px;
+      padding: 11px;
+      font-size: 15px;
+      font-weight: 600;
+      cursor: pointer;
+      transition: background .2s;
+      margin-top: 4px;
+    }
+    .auth-box button#authSubmit:hover:not(:disabled) { background: #4f46e5; }
+    .auth-box button#authSubmit:disabled { opacity: .5; cursor: not-allowed; }
+    #authError {
+      color: #f87171;
+      font-size: 13px;
+      text-align: center;
+      min-height: 18px;
+    }
+    /* LOGOUT BUTTON */
+    #logoutBtn {
+      display: none;
+      position: fixed;
+      bottom: 14px;
+      right: 14px;
+      z-index: 9999;
+      background: rgba(15,23,42,0.85);
+      color: #94a3b8;
+      border: 1px solid #334155;
+      border-radius: 8px;
+      padding: 6px 12px;
+      font-size: 12px;
+      cursor: pointer;
+      font-family: system-ui, sans-serif;
+    }
+    #logoutBtn:hover { background: #1e293b; color: #f1f5f9; }
+  </style>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; }
+    html, body { height: 100%; margin: 0; padding: 0; }
+    body { font-family: 'Courier New', monospace; background: #0a0e14; }
+    #map {
+      position: fixed;
+      top: 0; right: 0; bottom: 0;
+      left: 280px;
+      transition: left .3s ease;
+    }
+    #map.full { left: 0; }
+
+    /* ── SELECTION ── */
+    .selection-rect { border:2px dashed #4ade80; background:rgba(74,222,128,0.1); position:absolute; pointer-events:none; z-index:9999; }
+    .marker-selected { filter: drop-shadow(0 0 8px #4ade80) brightness(1.4); }
+    .label-count { background:rgba(0,0,0,0.85); color:#4ade80; padding:2px 6px; border-radius:4px; font-size:11px; font-family:'Courier New',monospace; white-space:nowrap; border:1px solid rgba(74,222,128,0.5); }
+
+    /* ── TOGGLE MENU BTN ── */
+    #toggleMenu {
+      position: fixed;
+      top: 12px; left: 12px;
+      z-index: 2000;
+      background: rgba(15,20,30,0.95);
+      color: #4ade80;
+      border: 1px solid rgba(74,222,128,0.7);
+      border-radius: 8px;
+      padding: 7px 14px;
+      font-family: 'Courier New', monospace;
+      font-size: 12px;
+      cursor: pointer;
+      letter-spacing: 1px;
+      text-transform: uppercase;
+      backdrop-filter: blur(8px);
+      transition: all .2s;
+    }
+    #toggleMenu:hover { background: rgba(74,222,128,0.2); border-color: #4ade80; box-shadow: 0 0 12px rgba(74,222,128,0.3); }
+
+    /* ── MAIN SIDEBAR ── */
+    .toolbar {
+      position: fixed;
+      top: 0; left: 0;
+      height: 100vh;
+      width: 280px;
+      z-index: 1500;
+      background: rgba(12,17,26,0.99);
+      border-right: 1px solid rgba(74,222,128,0.35);
+      backdrop-filter: blur(12px);
+      display: flex;
+      flex-direction: column;
+      overflow: hidden;
+      transition: transform .3s ease;
+      box-shadow: 4px 0 24px rgba(0,0,0,0.6);
+    }
+    .toolbar.hidden { transform: translateX(-100%); }
+
+    /* sidebar header */
+    .tb-header {
+      padding: 14px 14px 10px;
+      border-bottom: 1px solid rgba(74,222,128,0.25);
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      margin-top: 44px;
+      background: rgba(74,222,128,0.04);
+    }
+    .tb-header .tb-title {
+      color: #6ee7a0;
+      font-size: 11px;
+      letter-spacing: 2px;
+      text-transform: uppercase;
+      font-weight: 700;
+    }
+    .tb-id-badge {
+      margin-left: auto;
+      background: rgba(74,222,128,0.15);
+      color: #4ade80;
+      border: 1px solid rgba(74,222,128,0.5);
+      border-radius: 6px;
+      padding: 3px 10px;
+      font-size: 11px;
+      letter-spacing: 1px;
+    }
+
+    /* scrollable content */
+    .tb-body {
+      flex: 1;
+      overflow-y: auto;
+      overflow-x: hidden;
+      padding: 8px 10px 80px;
+      scrollbar-width: thin;
+      scrollbar-color: rgba(74,222,128,0.4) transparent;
+    }
+    .tb-body::-webkit-scrollbar { width: 4px; }
+    .tb-body::-webkit-scrollbar-thumb { background: rgba(74,222,128,0.4); border-radius: 2px; }
+
+    /* section labels */
+    .tb-section {
+      font-size: 9px;
+      letter-spacing: 2.5px;
+      text-transform: uppercase;
+      color: rgba(74,222,128,0.65);
+      margin: 14px 0 6px;
+      padding: 0 2px 4px;
+      border-bottom: 1px solid rgba(74,222,128,0.12);
+    }
+
+    /* ── UNIVERSAL BTN ── */
+    .btn {
+      background: rgba(255,255,255,0.06);
+      border: 1px solid rgba(255,255,255,0.18);
+      border-radius: 7px;
+      color: #cbd5e1;
+      cursor: pointer;
+      font-family: 'Courier New', monospace;
+      font-size: 11px;
+      padding: 5px 8px;
+      transition: all .15s;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      gap: 4px;
+      line-height: 1;
+    }
+    .btn:hover { background: rgba(74,222,128,0.14); border-color: rgba(74,222,128,0.6); color: #4ade80; }
+    .btn.active { background: rgba(74,222,128,0.22); border-color: #4ade80; color: #4ade80; box-shadow: 0 0 10px rgba(74,222,128,0.25); }
+    .btn img { display: block; filter: brightness(0) invert(1) opacity(0.75); }
+    .btn:hover img, .btn.active img { filter: brightness(0) invert(1) opacity(1); }
+
+    /* top action row */
+    .tb-actions {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 5px;
+      margin-bottom: 4px;
+    }
+
+    /* unit grid */
+    .unit-grid {
+      display: grid;
+      grid-template-columns: repeat(6, 1fr);
+      gap: 4px;
+      margin-bottom: 4px;
+    }
+    .unit-grid .btn {
+      padding: 6px 4px;
+      border-radius: 6px;
+      aspect-ratio: 1;
+    }
+    .unit-grid .btn img { width: 26px; height: 26px; object-fit: contain; }
+
+    /* search */
+    .tb-search {
+      display: flex;
+      gap: 5px;
+      align-items: center;
+      margin-bottom: 4px;
+    }
+    .search-input {
+      flex: 1;
+      background: rgba(255,255,255,0.07);
+      border: 1px solid rgba(255,255,255,0.2);
+      border-radius: 7px;
+      color: #e2e8f0;
+      font-family: 'Courier New', monospace;
+      font-size: 11px;
+      padding: 7px 10px;
+      outline: none;
+      transition: border-color .2s;
+    }
+    .search-input::placeholder { color: rgba(255,255,255,0.3); }
+    .search-input:focus { border-color: rgba(74,222,128,0.7); background: rgba(74,222,128,0.05); }
+
+    /* filter pills */
+    .filter-row {
+      display: flex;
+      gap: 4px;
+      flex-wrap: wrap;
+      margin-bottom: 4px;
+    }
+    .filterBtn {
+      background: rgba(255,255,255,0.06);
+      border: 1px solid rgba(255,255,255,0.18);
+      border-radius: 20px;
+      color: #94a3b8;
+      cursor: pointer;
+      font-family: 'Courier New', monospace;
+      font-size: 10px;
+      padding: 3px 10px;
+      transition: all .15s;
+      letter-spacing: .5px;
+    }
+    .filterBtn:hover { background: rgba(74,222,128,0.1); border-color: rgba(74,222,128,0.5); color: #4ade80; }
+    .filterBtn.active-filter { background: rgba(74,222,128,0.18); border-color: #4ade80; color: #4ade80; }
+
+    /* course panel */
+    .course-panel { margin-top: 4px; }
+    .course-row { display: flex; align-items: center; gap: 8px; margin-bottom: 6px; flex-wrap: wrap; }
+    .course-label { color: rgba(74,222,128,0.8); font-size: 10px; letter-spacing: 1px; text-transform: uppercase; min-width: 50px; }
+    .course-val { color: #4ade80; font-size: 12px; font-weight: 700; min-width: 36px; text-shadow: 0 0 8px rgba(74,222,128,0.5); }
+
+    /* slider */
+    .slider {
+      flex: 1;
+      -webkit-appearance: none;
+      height: 3px;
+      background: rgba(74,222,128,0.25);
+      border-radius: 2px;
+      outline: none;
+      min-width: 80px;
+    }
+    .slider::-webkit-slider-thumb {
+      -webkit-appearance: none;
+      width: 14px; height: 14px;
+      border-radius: 50%;
+      background: #4ade80;
+      cursor: pointer;
+      box-shadow: 0 0 10px rgba(74,222,128,0.7);
+    }
+
+    /* count input */
+    .count-input {
+      background: rgba(255,255,255,0.07);
+      border: 1px solid rgba(255,255,255,0.2);
+      border-radius: 6px;
+      color: #e2e8f0;
+      font-family: 'Courier New', monospace;
+      font-size: 12px;
+      padding: 4px 8px;
+      width: 58px;
+      text-align: center;
+      outline: none;
+    }
+    .count-input:focus { border-color: rgba(74,222,128,0.7); }
+
+    /* danger/action buttons */
+    .btn-danger { border-color: rgba(239,68,68,0.6); color: #f87171; background: rgba(239,68,68,0.06); }
+    .btn-danger:hover { background: rgba(239,68,68,0.15); border-color: #ef4444; color: #fca5a5; }
+    .btn-warn { border-color: rgba(251,191,36,0.6); color: #fbbf24; background: rgba(251,191,36,0.05); }
+    .btn-warn:hover { background: rgba(251,191,36,0.14); border-color: #fbbf24; }
+
+    /* ── UR PANEL ── */
+    #urPanel {
+      position: fixed;
+      top: 12px; right: 12px;
+      z-index: 3000;
+      background: rgba(12,17,26,0.99);
+      border: 1px solid rgba(74,222,128,0.4);
+      border-radius: 12px;
+      backdrop-filter: blur(12px);
+      padding: 14px 16px;
+      min-width: 280px;
+      font-family: 'Courier New', monospace;
+      display: none;
+      box-shadow: 0 8px 32px rgba(0,0,0,0.6), 0 0 0 1px rgba(74,222,128,0.1);
+    }
+    #urPanel h4 {
+      margin: 0 0 12px;
+      font-size: 10px;
+      letter-spacing: 2px;
+      text-transform: uppercase;
+      color: rgba(74,222,128,0.8);
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+    }
+    #urCloseBtn {
+      background: rgba(239,68,68,0.18);
+      border: 1px solid rgba(239,68,68,0.5);
+      color: #f87171;
+      border-radius: 5px;
+      padding: 1px 7px;
+      cursor: pointer;
+      font-size: 12px;
+      font-family: 'Courier New', monospace;
+    }
+    #urCloseBtn:hover { background: rgba(239,68,68,0.35); color: #fca5a5; }
+
+    .ur-row { display: flex; gap: 4px; align-items: center; flex-wrap: wrap; margin: 6px 0; }
+    .ur-row label { color: rgba(74,222,128,0.7); font-size: 10px; letter-spacing: 1px; min-width: 30px; text-transform: uppercase; }
+    .ur-spd-btn {
+      background: rgba(255,255,255,0.06);
+      border: 1px solid rgba(255,255,255,0.18);
+      border-radius: 5px;
+      color: #94a3b8;
+      cursor: pointer;
+      font-family: 'Courier New', monospace;
+      font-size: 10px;
+      padding: 3px 6px;
+      transition: all .15s;
+    }
+    .ur-spd-btn:hover { border-color: rgba(74,222,128,0.6); color: #4ade80; }
+    .ur-spd-btn.active { background: rgba(74,222,128,0.22); border-color: #4ade80; color: #4ade80; }
+    .ur-ctrl-btn {
+      background: rgba(255,255,255,0.06);
+      border: 1px solid rgba(255,255,255,0.18);
+      border-radius: 7px;
+      color: #cbd5e1;
+      cursor: pointer;
+      font-family: 'Courier New', monospace;
+      font-size: 11px;
+      padding: 6px 12px;
+      transition: all .15s;
+      flex: 1;
+      text-align: center;
+    }
+    .ur-ctrl-btn:hover { background: rgba(74,222,128,0.12); border-color: rgba(74,222,128,0.6); color: #4ade80; }
+    .ur-ctrl-btn.active { background: rgba(74,222,128,0.2); border-color: #4ade80; color: #4ade80; }
+    .ur-ctrl-btn.active-red { background: rgba(239,68,68,0.18); border-color: #ef4444; color: #f87171; }
+    #urStatus { font-size: 10px; color: rgba(74,222,128,0.7); margin-top: 6px; letter-spacing: .5px; min-height: 14px; }
+
+    /* ── ISKANDER MENU ── */
+    #iskanderMenu {
+      background: rgba(12,17,26,0.99) !important;
+      border: 1px solid rgba(74,222,128,0.4) !important;
+      border-radius: 10px !important;
+      box-shadow: 0 8px 32px rgba(0,0,0,0.6) !important;
+      font-family: 'Courier New', monospace !important;
+    }
+    #iskanderMenu b { color: #4ade80; font-size: 11px; letter-spacing: 1px; }
+    #iskanderClose { background: rgba(239,68,68,0.18) !important; border: 1px solid rgba(239,68,68,0.5) !important; color: #f87171 !important; border-radius: 5px !important; cursor:pointer; }
+
+    /* ── LEAFLET ── */
+    .mytooltip { background: rgba(12,17,26,0.97) !important; border: 1px solid rgba(74,222,128,0.45) !important; color: #e2e8f0 !important; font-family:'Courier New',monospace !important; font-size:12px !important; border-radius:8px !important; box-shadow:0 4px 16px rgba(0,0,0,0.5) !important; }
+    .leaflet-popup-content-wrapper { background: rgba(12,17,26,0.99) !important; border: 1px solid rgba(74,222,128,0.4) !important; color: #e2e8f0 !important; font-family:'Courier New',monospace !important; border-radius:10px !important; box-shadow:0 8px 24px rgba(0,0,0,0.6) !important; }
+    .leaflet-popup-tip { background: rgba(12,17,26,0.99) !important; }
+    .leaflet-control-zoom a { background: rgba(12,17,26,0.95) !important; color: #4ade80 !important; border-color: rgba(74,222,128,0.45) !important; font-size:16px !important; }
+    .leaflet-control-zoom a:hover { background: rgba(74,222,128,0.18) !important; }
+    .leaflet-control-attribution { background: rgba(12,17,26,0.7) !important; color: #475569 !important; font-size:9px !important; }
+    .leaflet-control-attribution a { color: #475569 !important; }
+
+    /* ── CALC INPUT ── */
+    #calcSpeed {
+      background: rgba(255,255,255,0.07);
+      border: 1px solid rgba(255,255,255,0.2);
+      border-radius: 6px;
+      color: #e2e8f0;
+      font-family: 'Courier New', monospace;
+      font-size: 11px;
+      padding: 5px 8px;
+      width: 90px;
+      outline: none;
+    }
+    #calcSpeed:focus { border-color: rgba(74,222,128,0.7); }
+    #calcSpeed::placeholder { color: rgba(255,255,255,0.3); }
+
+    /* ── MOBILE ── */
+    @media (max-width: 700px) {
+      .toolbar { width: 100%; height: auto; max-height: 60vh; top: auto; bottom: 0; border-right: none; border-top: 1px solid rgba(74,222,128,0.35); }
+      #toggleMenu { top: 8px; left: 8px; }
+    }
+    @media (min-width: 701px) {
+      #mobileTopScroller, #mobileDrawer { display: none !important; }
+    }
+
+    /* watermark */
+    .watermark { pointer-events:none; position:fixed; top:0; left:0; width:100%; height:100%; z-index:9999; opacity:0.06; font-size:20px; font-weight:bold; white-space:nowrap; color:#4ade80; transform:rotate(-30deg); display:flex; flex-wrap:wrap; justify-content:center; align-content:center; }
+    .watermark span { margin:40px; }
+
+    /* JS compat */
+    .pill { background:rgba(74,222,128,0.12); color:#4ade80; padding:2px 8px; border-radius:20px; font-size:11px; border:1px solid rgba(74,222,128,0.35); }
+    .row { display:flex; gap:6px; align-items:center; flex-wrap:wrap; margin:4px 0; }
+    .info { font-size:10px; color:rgba(255,255,255,0.3); letter-spacing:.5px; }
+  </style>
+</head>
+<body>
+
+<!-- ЕКРАН АВТОРИЗАЦІЇ -->
+<div id="authScreen">
+  <div class="auth-box">
+    <div class="auth-logo">🦅</div>
+    <h2>Boyovy Sokil</h2>
+    <input id="authEmail" type="email" placeholder="Email" autocomplete="username" />
+    <input id="authPass"  type="password" placeholder="Пароль" autocomplete="current-password" />
+    <div id="authError"></div>
+    <button id="authSubmit" onclick="__firebaseLogin()">Увійти</button>
+  </div>
+</div>
+
+<!-- КНОПКА ВИХОДУ -->
+<button id="logoutBtn" onclick="__firebaseLogout()">
+  <span id="authUserEmail"></span> &nbsp;·&nbsp; Вийти
+</button>
+
+<style>
+.watermark {
+  pointer-events:none;
+  position:fixed;
+  top:0; left:0;
+  width:100%; height:100%;
+  z-index:9999;
+  opacity:0.40; /* not too dense */
+  font-size:22px;
+  font-weight:bold;
+  white-space:nowrap;
+  color:#000;
+  transform:rotate(-30deg);
+  display:flex;
+  flex-wrap:wrap;
+  justify-content:center;
+  align-content:center;
+}
+
+.watermark span{
+  margin:40px;
+  opacity:0.40;
+}
+</style>
+
+<div class="watermark">
+<span>@boyovy_sokil</span>
+<span>@boyovy_sokil</span>
+<span>@boyovy_sokil</span>
+<span>@boyovy_sokil</span>
+<span>@boyovy_sokil</span>
+<span>@boyovy_sokil</span>
+<span>@boyovy_sokil</span>
+<span>@boyovy_sokil</span>
+<span>@boyovy_sokil</span>
+<span>@boyovy_sokil</span>
+<span>@boyovy_sokil</span>
+<span>@boyovy_sokil</span>
+<span>@boyovy_sokil</span>
+<span>@boyovy_sokil</span>
+<span>@boyovy_sokil</span>
+<span>@boyovy_sokil</span>
+<span>@boyovy_sokil</span>
+<span>@boyovy_sokil</span>
+<span>@boyovy_sokil</span>
+<span>@boyovy_sokil</span>
+<span>@boyovy_sokil</span>
+<span>@boyovy_sokil</span>
+<span>@boyovy_sokil</span>
+<span>@boyovy_sokil</span>
+<span>@boyovy_sokil</span>
+<span>@boyovy_sokil</span>
+<span>@boyovy_sokil</span>
+<span>@boyovy_sokil</span>
+<span>@boyovy_sokil</span>
+<span>@boyovy_sokil</span>
+<span>@boyovy_sokil</span>
+<span>@boyovy_sokil</span>
+<span>@boyovy_sokil</span>
+<span>@boyovy_sokil</span>
+<span>@boyovy_sokil</span>
+<span>@boyovy_sokil</span>
+<span>@boyovy_sokil</span>
+<span>@boyovy_sokil</span>
+<span>@boyovy_sokil</span>
+<span>@boyovy_sokil</span>
+<span>@boyovy_sokil</span>
+<span>@boyovy_sokil</span>
+<span>@boyovy_sokil</span>
+<span>@boyovy_sokil</span>
+<span>@boyovy_sokil</span>
+<span>@boyovy_sokil</span>
+<span>@boyovy_sokil</span>
+<span>@boyovy_sokil</span>
+<span>@boyovy_sokil</span>
+<span>@boyovy_sokil</span>
+<span>@boyovy_sokil</span>
+<span>@boyovy_sokil</span>
+<span>@boyovy_sokil</span>
+<span>@boyovy_sokil</span>
+<span>@boyovy_sokil</span>
+<span>@boyovy_sokil</span>
+<span>@boyovy_sokil</span>
+<span>@boyovy_sokil</span>
+<span>@boyovy_sokil</span>
+<span>@boyovy_sokil</span>
+<span>@boyovy_sokil</span>
+<span>@boyovy_sokil</span>
+<span>@boyovy_sokil</span>
+<span>@boyovy_sokil</span>
+<span>@boyovy_sokil</span>
+<span>@boyovy_sokil</span>
+<span>@boyovy_sokil</span>
+<span>@boyovy_sokil</span>
+<span>@boyovy_sokil</span>
+<span>@boyovy_sokil</span>
+<span>@boyovy_sokil</span>
+<span>@boyovy_sokil</span>
+<span>@boyovy_sokil</span>
+<span>@boyovy_sokil</span>
+<span>@boyovy_sokil</span>
+<span>@boyovy_sokil</span>
+<span>@boyovy_sokil</span>
+<span>@boyovy_sokil</span>
+<span>@boyovy_sokil</span>
+<span>@boyovy_sokil</span>
+<span>@boyovy_sokil</span>
+<span>@boyovy_sokil</span>
+<span>@boyovy_sokil</span>
+<span>@boyovy_sokil</span>
+<span>@boyovy_sokil</span>
+<span>@boyovy_sokil</span>
+<span>@boyovy_sokil</span>
+<span>@boyovy_sokil</span>
+<span>@boyovy_sokil</span>
+<span>@boyovy_sokil</span>
+<span>@boyovy_sokil</span>
+<span>@boyovy_sokil</span>
+<span>@boyovy_sokil</span>
+<span>@boyovy_sokil</span>
+<span>@boyovy_sokil</span>
+<span>@boyovy_sokil</span>
+<span>@boyovy_sokil</span>
+<span>@boyovy_sokil</span>
+<span>@boyovy_sokil</span>
+<span>@boyovy_sokil</span>
+<span>@boyovy_sokil</span>
+<span>@boyovy_sokil</span>
+<span>@boyovy_sokil</span>
+<span>@boyovy_sokil</span>
+<span>@boyovy_sokil</span>
+<span>@boyovy_sokil</span>
+<span>@boyovy_sokil</span>
+<span>@boyovy_sokil</span>
+<span>@boyovy_sokil</span>
+<span>@boyovy_sokil</span>
+<span>@boyovy_sokil</span>
+<span>@boyovy_sokil</span>
+<span>@boyovy_sokil</span>
+<span>@boyovy_sokil</span>
+<span>@boyovy_sokil</span>
+<span>@boyovy_sokil</span>
+<span>@boyovy_sokil</span>
+<span>@boyovy_sokil</span>
+<span>@boyovy_sokil</span>
+<span>@boyovy_sokil</span>
+</div>
+
+  <div id="map"></div>
+
+  <!-- TOGGLE BUTTON -->
+  <button id="toggleMenu">☰ МЕНЮ</button>
+
+  <!-- MAIN SIDEBAR -->
+  <div class="toolbar" id="toolbar">
+
+    <div class="tb-header">
+      <span class="tb-title">🦅 Контроль</span>
+      <span class="tb-id-badge">ID: <span id="selectedId">—</span></span>
+    </div>
+
+    <div class="tb-body">
+
+      <!-- ACTIONS ROW -->
+      <div class="tb-section">Режим / Дії</div>
+      <div class="tb-actions">
+        <button id="toggleTheme" class="btn" title="Тема">🌙</button>
+        <button id="toolSelect" class="btn" title="Курсор"><img src="assets/select.png" width="18"></button>
+        <button id="toggleRed" class="btn" title="Червоні">🔴</button>
+        <button id="wmToggleBtn2" class="btn" title="Водяний знак">💧</button>
+        <button id="toolMove" class="btn">🛫 Рух</button>
+        <button id="toolUR" class="btn" title="Панель управління">УР</button>
+        <button id="toolIskander" class="btn" title="Iskander"><img src="assets/iskanderm.png" width="20"></button>
+      
+      </div>
+
+      <!-- CALC ROW -->
+      <div class="tb-section">Калькулятор</div>
+      <div class="tb-actions">
+        <button id="toolCalc" class="btn">🧮 Розрахунок</button>
+        <input id="calcSpeed" type="number" placeholder="км/год" />
+      </div>
+
+      <!-- SEARCH -->
+      <div class="tb-section">Пошук</div>
+      <div class="tb-search">
+        <input id="searchBox" class="search-input" type="text" placeholder="Населений пункт…" />
+        <button id="searchBtn" class="btn">🔎</button>
+      </div>
+
+      <!-- FILTER -->
+      <div class="filter-row">
+        <button class="filterBtn" data-type="all">Усі</button>
+        <button class="filterBtn" data-type="uav">БпЛА</button>
+        <button class="filterBtn" data-type="plane">Літаки</button>
+        <button class="filterBtn" data-type="missile">Ракети</button>
+      </div>
+
+      <!-- UNITS -->
+      <div class="tb-section">БпЛА</div>
+      <div class="unit-grid">
+        <button id="toolShahed"     class="btn" title="Shahed"><img src="assets/shahed.png"></button>
+        <button id="toolDrone"      class="btn" title="Дрон"><img src="assets/heavy-drone.png"></button>
+        <button id="toolLancet"     class="btn" title="Lancet"><img src="assets/lancet.png"></button>
+        <button id="toolZala"       class="btn" title="Zala"><img src="assets/zala.png"></button>
+        <button id="toolSupercum"   class="btn" title="Supercam"><img src="assets/supercum.png"></button>
+        <button id="toolOrlan10"    class="btn" title="Orlan-10"><img src="assets/orlan10.png"></button>
+        <button id="toolFpv"        class="btn" title="FPV"><img src="assets/fpv.png"></button>
+        <button id="toolGerbera"    class="btn" title="Gerbera"><img src="assets/gerbera.png"></button>
+        <button id="toolItalmas"    class="btn" title="Italmas"><img src="assets/italmas.png"></button>
+        <button id="toolMolnia"     class="btn" title="Molnia"><img src="assets/molnia.png"></button>
+        <button id="toolReakshahed" class="btn" title="Reakshahed"><img src="assets/reakshahed.png"></button>
+        <button id="toolAkystik"    class="btn" title="Akystik"><img src="assets/akystik.png"></button>
+        <button id="toolNevidomi"   class="btn" title="Невідомі"><img src="assets/nevidomi.png"></button>
+      </div>
+
+      <div class="tb-section">Авіація</div>
+      <div class="unit-grid">
+        <button id="toolSu57"  class="btn" title="Su-57"><img src="assets/su-57.png"></button>
+        <button id="toolSy34"  class="btn" title="Su-34"><img src="assets/sy34.png"></button>
+        <button id="toolMig29" class="btn" title="MiG-29"><img src="assets/mig29.png"></button>
+        <button id="toolMig31" class="btn" title="MiG-31"><img src="assets/mig31.png"></button>
+        <button id="toolTy22"  class="btn" title="Tu-22"><img src="assets/ty22.png"></button>
+        <button id="toolTy95"  class="btn" title="Tu-95"><img src="assets/ty95.png"></button>
+        <button id="toolTy160" class="btn" title="Tu-160"><img src="assets/ty160.png"></button>
+      </div>
+
+      <div class="tb-section">Ракети / КАБ</div>
+      <div class="unit-grid">
+        <button id="toolGrom"   class="btn" title="Grom"><img src="assets/grom.png"></button>
+        <button id="toolKalibr" class="btn" title="Kalibr"><img src="assets/kalibr.png"></button>
+        <button id="toolKinzal" class="btn" title="Kinzal"><img src="assets/kinzal.png"></button>
+        <button id="toolX22"    class="btn" title="X-22"><img src="assets/x22.png"></button>
+        <button id="toolX59"    class="btn" title="X-59"><img src="assets/x59.png"></button>
+        <button id="toolX69"    class="btn" title="X-69"><img src="assets/x69.png"></button>
+        <button id="toolX101"   class="btn" title="X-101"><img src="assets/x101.png"></button>
+        <button id="toolKab"    class="btn" title="КАБ"><img src="assets/kab.png"></button>
+      </div>
+
+      <!-- COURSE PANEL -->
+      <div class="tb-section">Курс і кількість</div>
+      <div id="coursePanel" class="course-panel">
+        <div class="course-row">
+          <span class="course-label">Курс</span>
+          <input id="heading" type="range" min="0" max="359" value="0" class="slider" />
+          <span id="headingVal" class="course-val">0°</span>
+          <button id="holdHeadingBtn" class="btn" title="Тримати курс">🔒</button>
+        </div>
+        <div class="course-row">
+          <span class="course-label">К-сть</span>
+          <input id="count" type="number" value="1" min="1" class="count-input" />
+          <button id="toggleCount" class="btn">ON</button>
+        </div>
+      </div>
+
+      <!-- DELETE ROW -->
+      <div class="tb-section">Управління</div>
+      <div class="tb-actions">
+        <button id="deleteBtn" class="btn btn-danger">✕ Видалити</button>
+        <button id="clearBtn"  class="btn btn-warn">⚠ Очистити все</button>
+      </div>
+
+      <div class="info" style="margin-top:10px;">Клік по мапі — додати мітку.<br>ПКМ drag — групове виділення.</div>
+    </div>
+  </div>
+
+  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" crossorigin="">
+// ====================
+// ГРУПОВЕ ВИДІЛЕННЯ ПКМ
+// ====================
+let isRMB=false, startPoint=null, selectionRect=null;
+let selectedItems = new Set();
+
+map.getContainer().addEventListener("contextmenu", e => e.preventDefault());
+
+// лкм — очищення виділення
+map.on("click", () => {
+  for (const item of selectedItems) {
+    if (item.marker._icon) item.marker._icon.classList.remove("marker-selected");
+  }
+  selectedItems.clear();
+  document.getElementById('selectedId').textContent = '—';
+});
+
+map.on("mousedown", e => {
+  if (e.originalEvent.button === 2) {
+    isRMB = true;
+    startPoint = map.latLngToContainerPoint(e.latlng);
+    selectionRect = L.DomUtil.create("div", "selection-rect", document.body);
+    selectionRect.style.left = startPoint.x + "px";
+    selectionRect.style.top = startPoint.y + "px";
+    selectionRect.style.width = "0px";
+    selectionRect.style.height = "0px";
+  }
+});
+
+map.on("mousemove", e => {
+  if (!isRMB || !selectionRect) return;
+  const cur = map.latLngToContainerPoint(e.latlng);
+  const x1 = Math.min(startPoint.x, cur.x);
+  const y1 = Math.min(startPoint.y, cur.y);
+  const x2 = Math.max(startPoint.x, cur.x);
+  const y2 = Math.max(startPoint.y, cur.y);
+  selectionRect.style.left = x1 + "px";
+  selectionRect.style.top = y1 + "px";
+  selectionRect.style.width = (x2 - x1) + "px";
+  selectionRect.style.height = (y2 - y1) + "px";
+});
+
+map.on("mouseup", e => {
+  if (e.originalEvent.button !== 2) return;
+  isRMB = false;
+
+  if (!selectionRect) return;
+
+  const rect = selectionRect.getBoundingClientRect();
+  selectionRect.remove();
+  selectionRect = null;
+
+  // очистити попереднє виділення
+  for (const item of selectedItems) {
+    if (item.marker._icon) item.marker._icon.classList.remove("marker-selected");
+  }
+  selectedItems.clear();
+
+  // знайти нові виділені
+  for (const item of state.items.values()) {
+    const pt = map.latLngToContainerPoint(item.marker.getLatLng());
+    if (pt.x >= rect.left && pt.x <= rect.right &&
+        pt.y >= rect.top && pt.y <= rect.bottom) {
+      selectedItems.add(item);
+      if (item.marker._icon) item.marker._icon.classList.add("marker-selected");
+    }
+  }
+
+  // Оновити показ обраного
+  if (selectedItems.size === 1) {
+    const only = [...selectedItems][0];
+    document.getElementById('selectedId').textContent = only.id;
+    state.selected = only;
+  } else if (selectedItems.size > 1) {
+    document.getElementById('selectedId').textContent = "група (" + selectedItems.size + ")";
+    state.selected = null;
+  }
+});
+
+// Кнопка Видалити — видаляє або 1 або групу
+const oldDelete = deleteBtn.onclick;
+deleteBtn.onclick = () => {
+  if (selectedItems.size > 0) {
+    for (const item of selectedItems) {
+      map.removeLayer(item.marker);
+      if (item.arrowLine) map.removeLayer(item.arrowLine);
+      if (item.decorator) map.removeLayer(item.decorator);
+      if (item.label) map.removeLayer(item.label);
+      state.items.delete(item.id);
+    }
+    selectedItems.clear();
+    document.getElementById('selectedId').textContent = '—';
+    state.selected = null;
+  } else {
+    oldDelete();
+  }
+};
+
+
+// THEME TOGGLE
+const osm = L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png');
+const dark = L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png');
+osm.addTo(map);
+let base='osm';
+document.getElementById('toggleTheme').onclick=()=>{
+  if(base==='osm'){ map.removeLayer(osm); dark.addTo(map); base='dark'; toggleTheme.textContent='☀️';}
+  else{ map.removeLayer(dark); osm.addTo(map); base='osm'; toggleTheme.textContent='🌙';}
+};
+
+
+// HIDE COURSE PANEL
+document.getElementById('toggleCourse').onclick=()=>{
+  const p=document.getElementById('arrowPanel');
+  p.style.display = p.style.display==='none'?'block':'none';
+};
+
+</script>
+  <script src="https://unpkg.com/leaflet-rotatedmarker@0.2.0/leaflet.rotatedMarker.js">
+// ====================
+// ГРУПОВЕ ВИДІЛЕННЯ ПКМ
+// ====================
+let isRMB=false, startPoint=null, selectionRect=null;
+let selectedItems = new Set();
+
+map.getContainer().addEventListener("contextmenu", e => e.preventDefault());
+
+// лкм — очищення виділення
+map.on("click", () => {
+  for (const item of selectedItems) {
+    if (item.marker._icon) item.marker._icon.classList.remove("marker-selected");
+  }
+  selectedItems.clear();
+  document.getElementById('selectedId').textContent = '—';
+});
+
+map.on("mousedown", e => {
+  if (e.originalEvent.button === 2) {
+    isRMB = true;
+    startPoint = map.latLngToContainerPoint(e.latlng);
+    selectionRect = L.DomUtil.create("div", "selection-rect", document.body);
+    selectionRect.style.left = startPoint.x + "px";
+    selectionRect.style.top = startPoint.y + "px";
+    selectionRect.style.width = "0px";
+    selectionRect.style.height = "0px";
+  }
+});
+
+map.on("mousemove", e => {
+  if (!isRMB || !selectionRect) return;
+  const cur = map.latLngToContainerPoint(e.latlng);
+  const x1 = Math.min(startPoint.x, cur.x);
+  const y1 = Math.min(startPoint.y, cur.y);
+  const x2 = Math.max(startPoint.x, cur.x);
+  const y2 = Math.max(startPoint.y, cur.y);
+  selectionRect.style.left = x1 + "px";
+  selectionRect.style.top = y1 + "px";
+  selectionRect.style.width = (x2 - x1) + "px";
+  selectionRect.style.height = (y2 - y1) + "px";
+});
+
+map.on("mouseup", e => {
+  if (e.originalEvent.button !== 2) return;
+  isRMB = false;
+
+  if (!selectionRect) return;
+
+  const rect = selectionRect.getBoundingClientRect();
+  selectionRect.remove();
+  selectionRect = null;
+
+  // очистити попереднє виділення
+  for (const item of selectedItems) {
+    if (item.marker._icon) item.marker._icon.classList.remove("marker-selected");
+  }
+  selectedItems.clear();
+
+  // знайти нові виділені
+  for (const item of state.items.values()) {
+    const pt = map.latLngToContainerPoint(item.marker.getLatLng());
+    if (pt.x >= rect.left && pt.x <= rect.right &&
+        pt.y >= rect.top && pt.y <= rect.bottom) {
+      selectedItems.add(item);
+      if (item.marker._icon) item.marker._icon.classList.add("marker-selected");
+    }
+  }
+
+  // Оновити показ обраного
+  if (selectedItems.size === 1) {
+    const only = [...selectedItems][0];
+    document.getElementById('selectedId').textContent = only.id;
+    state.selected = only;
+  } else if (selectedItems.size > 1) {
+    document.getElementById('selectedId').textContent = "група (" + selectedItems.size + ")";
+    state.selected = null;
+  }
+});
+
+// Кнопка Видалити — видаляє або 1 або групу
+const oldDelete = deleteBtn.onclick;
+deleteBtn.onclick = () => {
+  if (selectedItems.size > 0) {
+    for (const item of selectedItems) {
+      map.removeLayer(item.marker);
+      if (item.arrowLine) map.removeLayer(item.arrowLine);
+      if (item.decorator) map.removeLayer(item.decorator);
+      if (item.label) map.removeLayer(item.label);
+      state.items.delete(item.id);
+    }
+    selectedItems.clear();
+    document.getElementById('selectedId').textContent = '—';
+    state.selected = null;
+  } else {
+    oldDelete();
+  }
+};
+
+
+// THEME TOGGLE
+const osm = L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png');
+const dark = L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png');
+osm.addTo(map);
+let base='osm';
+document.getElementById('toggleTheme').onclick=()=>{
+  if(base==='osm'){ map.removeLayer(osm); dark.addTo(map); base='dark'; toggleTheme.textContent='☀️';}
+  else{ map.removeLayer(dark); osm.addTo(map); base='osm'; toggleTheme.textContent='🌙';}
+};
+
+
+// HIDE COURSE PANEL
+document.getElementById('toggleCourse').onclick=()=>{
+  const p=document.getElementById('arrowPanel');
+  p.style.display = p.style.display==='none'?'block':'none';
+};
+
+</script>
+  <script src="https://unpkg.com/leaflet-polylinedecorator@1.7.0/dist/leaflet.polylineDecorator.min.js">
+// ====================
+// ГРУПОВЕ ВИДІЛЕННЯ ПКМ
+// ====================
+let isRMB=false, startPoint=null, selectionRect=null;
+let selectedItems = new Set();
+
+map.getContainer().addEventListener("contextmenu", e => e.preventDefault());
+
+// лкм — очищення виділення
+map.on("click", () => {
+  for (const item of selectedItems) {
+    if (item.marker._icon) item.marker._icon.classList.remove("marker-selected");
+  }
+  selectedItems.clear();
+  document.getElementById('selectedId').textContent = '—';
+});
+
+map.on("mousedown", e => {
+  if (e.originalEvent.button === 2) {
+    isRMB = true;
+    startPoint = map.latLngToContainerPoint(e.latlng);
+    selectionRect = L.DomUtil.create("div", "selection-rect", document.body);
+    selectionRect.style.left = startPoint.x + "px";
+    selectionRect.style.top = startPoint.y + "px";
+    selectionRect.style.width = "0px";
+    selectionRect.style.height = "0px";
+  }
+});
+
+map.on("mousemove", e => {
+  if (!isRMB || !selectionRect) return;
+  const cur = map.latLngToContainerPoint(e.latlng);
+  const x1 = Math.min(startPoint.x, cur.x);
+  const y1 = Math.min(startPoint.y, cur.y);
+  const x2 = Math.max(startPoint.x, cur.x);
+  const y2 = Math.max(startPoint.y, cur.y);
+  selectionRect.style.left = x1 + "px";
+  selectionRect.style.top = y1 + "px";
+  selectionRect.style.width = (x2 - x1) + "px";
+  selectionRect.style.height = (y2 - y1) + "px";
+});
+
+map.on("mouseup", e => {
+  if (e.originalEvent.button !== 2) return;
+  isRMB = false;
+
+  if (!selectionRect) return;
+
+  const rect = selectionRect.getBoundingClientRect();
+  selectionRect.remove();
+  selectionRect = null;
+
+  // очистити попереднє виділення
+  for (const item of selectedItems) {
+    if (item.marker._icon) item.marker._icon.classList.remove("marker-selected");
+  }
+  selectedItems.clear();
+
+  // знайти нові виділені
+  for (const item of state.items.values()) {
+    const pt = map.latLngToContainerPoint(item.marker.getLatLng());
+    if (pt.x >= rect.left && pt.x <= rect.right &&
+        pt.y >= rect.top && pt.y <= rect.bottom) {
+      selectedItems.add(item);
+      if (item.marker._icon) item.marker._icon.classList.add("marker-selected");
+    }
+  }
+
+  // Оновити показ обраного
+  if (selectedItems.size === 1) {
+    const only = [...selectedItems][0];
+    document.getElementById('selectedId').textContent = only.id;
+    state.selected = only;
+  } else if (selectedItems.size > 1) {
+    document.getElementById('selectedId').textContent = "група (" + selectedItems.size + ")";
+    state.selected = null;
+  }
+});
+
+// Кнопка Видалити — видаляє або 1 або групу
+const oldDelete = deleteBtn.onclick;
+deleteBtn.onclick = () => {
+  if (selectedItems.size > 0) {
+    for (const item of selectedItems) {
+      map.removeLayer(item.marker);
+      if (item.arrowLine) map.removeLayer(item.arrowLine);
+      if (item.decorator) map.removeLayer(item.decorator);
+      if (item.label) map.removeLayer(item.label);
+      state.items.delete(item.id);
+    }
+    selectedItems.clear();
+    document.getElementById('selectedId').textContent = '—';
+    state.selected = null;
+  } else {
+    oldDelete();
+  }
+};
+
+
+// THEME TOGGLE
+const osm = L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png');
+const dark = L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png');
+osm.addTo(map);
+let base='osm';
+document.getElementById('toggleTheme').onclick=()=>{
+  if(base==='osm'){ map.removeLayer(osm); dark.addTo(map); base='dark'; toggleTheme.textContent='☀️';}
+  else{ map.removeLayer(dark); osm.addTo(map); base='osm'; toggleTheme.textContent='🌙';}
+};
+
+
+// HIDE COURSE PANEL
+document.getElementById('toggleCourse').onclick=()=>{
+  const p=document.getElementById('arrowPanel');
+  p.style.display = p.style.display==='none'?'block':'none';
+};
+
+</script>
+
+
+
+  <script>
+    const map = L.map('map', { center: [49.0, 31.0], zoom: 6 });
+
+    
+
+    // ======================
+    // Іконки
+    // ======================
+    
+    // ======================
+    // Іконки (чистий блок)
+    // ======================
+    let redMode = false; // global flag
+    const ICONS = {
+      'shahed': ['shahed.png','shahedred.png',[20,20]],
+      'drone': ['heavy-drone.png','heavy-dronered.png',[22,22]],
+      'lancet': ['lancet.png','lancetred.png',[22,22]],
+      'zala': ['zala.png','zalared.png',[24,24]],
+      'supercum': ['supercum.png','supercumred.png',[24,24]],
+      'su57': ['su-57.png','su-57red.png',[30,30]],
+      'orlan10': ['orlan10.png','orlan10red.png',[22,22]],
+
+      'akystik': ['akystik.png','akystikred.png',[24,24
+]],
+      'nevidomi': ['nevidomi.png','nevidomired.png',[32,32]],
+      'kab': ['kab.png','kabred.png',[34,34]],
+
+      'fpv': ['fpv.png','fpvred.png',[22,22]],
+      'gerbera': ['gerbera.png','gerberared.png',[18,24]],
+      'italmas': ['italmas.png','italmasred.png',[18,18]],
+      'molnia': ['molnia.png','molniared.png',[22,22]],
+      'reakshahed': ['reakshahed.png','reakshahedred.png',[18,18]],
+
+      'grom': ['grom.png','gromred.png',[33,45]],
+      'kalibr': ['kalibr.png','kalibrred.png',[22,22]],
+      'kinzal': ['kinzal.png','kinzalred.png',[10,22]],
+      'x22': ['x22.png','x22red.png',[28,28]],
+      'x59': ['x59.png','x59red.png',[14,22]],
+      'x69': ['x69.png','x69red.png',[14,22]],
+      'x101': ['x101.png','x101red.png',[14,22]],
+
+      'ty22': ['ty22.png','ty22red.png',[28,28]],
+      'ty95': ['ty95.png','ty95red.png',[28,28]],
+      'ty160': ['ty160.png','ty160red.png',[24,32]],
+      'sy34': ['sy34.png','sy34red.png',[20,28]],
+      'mig29': ['mig29.png','mig29red.png',[20,28]],
+      'mig31': ['mig31.png','mig31red.png',[20,28]],
+      'iskander': ['iskanderm.png','iskandermred.png',[28,28]]
+    };
+
+    const ICON_OBJ = {};
+    const ICON_OBJ_RED = {};
+    for(const k in ICONS){
+      const entry = ICONS[k];
+      const size = entry[2] || [22,22];
+      const anchor = [Math.floor(size[0]/2), Math.floor(size[1]/2)];
+      ICON_OBJ[k] = L.icon({ iconUrl: 'assets/' + entry[0], iconSize: size, iconAnchor: anchor });
+      ICON_OBJ_RED[k] = L.icon({ iconUrl: 'assets/' + entry[1], iconSize: size, iconAnchor: anchor });
+    }
+
+function getIconForType(type){
+      if(!type) return ICON_OBJ['shahed'];
+      const parts = String(type).split(':');
+      const name = parts.length>1 ? parts[1] : parts[0];
+      return redMode ? (ICON_OBJ_RED[name] || ICON_OBJ['shahed']) : (ICON_OBJ[name] || ICON_OBJ['shahed']);
+    }
+
+
+
+    // Текстові іконки
+    function textIcon(text, color="#000", bg="#fff"){
+      return L.divIcon({
+        className: '',
+        html: `<div style="font-weight:bold;color:${color};background:${bg};padding:2px 6px;border-radius:6px;
+                box-shadow:0 1px 4px rgba(0,0,0,0.2);font-size:14px;">${text}</div>`,
+        iconAnchor: [20, 20]
+      });
+    }
+       // ======================
+    // СТАН
+    // ======================
+    const state = { tool: 'select', nextId: 1, selected: null, items: new Map(), holdHeading: false , lastArrowLen: 10};
+
+    function toRad(deg){ return deg * Math.PI / 180; }
+    function toDeg(rad){ return rad * 180 / Math.PI; }
+    function destinationPoint(lat, lon, bearingDeg, distanceKm){
+      const R = 6371.0088, δ = distanceKm / R, θ = toRad(bearingDeg);
+      const φ1 = toRad(lat), λ1 = toRad(lon);
+      const sinφ1 = Math.sin(φ1), cosφ1 = Math.cos(φ1);
+      const sinδ = Math.sin(δ), cosδ = Math.cos(δ);
+      const sinφ2 = sinφ1 * cosδ + cosφ1 * sinδ * Math.cos(θ);
+      const φ2 = Math.asin(sinφ2);
+      const y = Math.sin(θ) * sinδ * cosφ1;
+      const x = cosδ - sinφ1 * sinφ2;
+      const λ2 = λ1 + Math.atan2(y, x);
+      return [ toDeg(φ2), ((toDeg(λ2) + 540) % 360) - 180 ];
+    }
+
+   
+    function updateLabel(item){
+      if(item.label) map.removeLayer(item.label);
+      const latlng = item.marker.getLatLng();
+      item.label = L.marker(latlng, {
+        icon: L.divIcon({ className: (window.__hideCount ? '' : 'label-count'), html: (window.__hideCount?'':item.count), iconAnchor: [-10, -10] })
+      }).addTo(map);
+    }
+
+    function selectItem(id){
+      const item = state.items.get(id);
+      state.selected = item || null;
+      document.getElementById('selectedId').textContent = item ? id : '—';
+      if(item){
+        headingInput.value = item.headingDeg;
+        headingVal.textContent = item.headingDeg + '°';
+        arrowLenInput.value = item.arrowKm;
+        arrowLenVal.textContent = item.arrowKm + ' км';
+        countInput.value = item.count;
+      }
+    }
+
+    function addItem(type, latlng){
+      const id = state.nextId++;
+      let icon = getIconForType(type);
+
+      const marker = L.marker(latlng, { icon, draggable: true }).addTo(map);
+      const initialHeading = state.holdHeading ? (Number(headingInput.value)||0) : 0;
+      const item = { id, type, marker, headingDeg: initialHeading, arrowKm: state.lastArrowLen,
+                     arrowLine:null, decorator:null, count: Number(countInput.value)||1, label:null };
+      marker.on('click', () => selectItem(id));
+      marker.on('drag', () => { createArrowFor(item); updateLabel(item); });
+      state.items.set(id, item);
+
+      // Встановити обертання одразу, якщо потрібно тримати курс
+      marker.setRotationAngle(item.headingDeg);
+
+      selectItem(id);
+      createArrowFor(item);
+      updateLabel(item);
+      return item;
+    }
+
+    function updateHeading(item, newHeading){
+      item.headingDeg = (Number(newHeading)+360)%360;
+      item.marker.setRotationAngle(item.headingDeg);
+      createArrowFor(item);
+    }
+    function updateArrowLen(item, km){ item.arrowKm = Math.max(0, Number(km)); createArrowFor(item); }
+    function updateCount(item, c){ item.count = Math.max(0, Number(c)); updateLabel(item); }
+
+    const toolShahedBtn  = document.getElementById('toolShahed');
+    const toolDroneBtn   = document.getElementById('toolDrone');
+    const toolLancetBtn  = document.getElementById('toolLancet');
+    const toolZalaBtn    = document.getElementById('toolZala');
+    const toolSupercumBtn= document.getElementById('toolSupercum');
+    const toolSu57Btn     = document.getElementById('toolSu57');
+    const toolOrlan10Btn  = document.getElementById('toolOrlan10');
+    const toolFpvBtn = document.getElementById('toolFpv');
+    const toolGerberaBtn = document.getElementById('toolGerbera');
+    const toolItalmasBtn = document.getElementById('toolItalmas');
+    const toolMolniaBtn = document.getElementById('toolMolnia');
+    const toolReakshahedBtn = document.getElementById('toolReakshahed');
+
+    const toolAkystikBtn = document.getElementById('toolAkystik');
+    const toolNevidomiBtn = document.getElementById('toolNevidomi');
+    const toolKabBtn = document.getElementById('toolKab');
+
+
+    const toolGromBtn = document.getElementById('toolGrom');
+    const toolKalibrBtn = document.getElementById('toolKalibr');
+    const toolKinzalBtn = document.getElementById('toolKinzal');
+    const toolX22Btn = document.getElementById('toolX22');
+    const toolX59Btn = document.getElementById('toolX59');
+    const toolX69Btn = document.getElementById('toolX69');
+    const toolX101Btn = document.getElementById('toolX101');
+
+    const toolTy22Btn = document.getElementById('toolTy22');
+    const toolTy95Btn = document.getElementById('toolTy95');
+    const toolTy160Btn = document.getElementById('toolTy160');
+
+    const toolLaunchBtn  = document.getElementById('toolLaunch');
+    const toolPrepareBtn = document.getElementById('toolPrepare');
+    const toolSelectBtn = document.getElementById('toolSelect');
+
+    function setTool(t){
+      state.tool = t;
+      [toolShahedBtn, toolDroneBtn, toolLaunchBtn, toolPrepareBtn, toolSelectBtn].forEach(b => b.classList.remove('active'));
+      if(t==='shahed')  toolShahedBtn.classList.add('active');
+      else if(t==='drone')   toolDroneBtn.classList.add('active');
+      else if(t==='lancet')  toolLancetBtn.classList.add('active');
+      else if(t==='zala')    toolZalaBtn.classList.add('active');
+      else if(t==='supercum')toolSupercumBtn.classList.add('active');
+      else if(t==='su57')    toolSu57Btn.classList.add('active');
+      else if(t==='orlan10') toolOrlan10Btn.classList.add('active');
+      else if(t==='launch')  toolLaunchBtn.classList.add('active');
+      else if(t==='prepare') toolPrepareBtn.classList.add('active');
+      else toolSelectBtn.classList.add('active');
+    }
+    toolShahedBtn.onclick  = () => setTool('shahed');
+    toolDroneBtn.onclick   = () => setTool('drone');
+    toolLancetBtn.onclick  = () => setTool('lancet');
+    toolZalaBtn.onclick    = () => setTool('zala');
+    toolSupercumBtn.onclick= () => setTool('supercum');
+    toolSu57Btn.onclick     = () => setTool('su57');
+    toolOrlan10Btn.onclick  = () => setTool('orlan10');   
+    toolSelectBtn.onclick  = () => setTool('select');
+
+    toolFpvBtn && (toolFpvBtn.onclick = () => setTool('uav:fpv'));
+    toolGerberaBtn && (toolGerberaBtn.onclick = () => setTool('uav:gerbera'));
+    toolItalmasBtn && (toolItalmasBtn.onclick = () => setTool('uav:italmas'));
+    toolMolniaBtn && (toolMolniaBtn.onclick = () => setTool('uav:molnia'));
+    toolReakshahedBtn && (toolReakshahedBtn.onclick = () => setTool('uav:reakshahed'));
+    
+    toolAkystikBtn && (toolAkystikBtn.onclick = () => setTool('uav:akystik'));
+    toolNevidomiBtn && (toolNevidomiBtn.onclick = () => setTool('uav:nevidomi'));
+    
+    toolKabBtn && (toolKabBtn.onclick = () => setTool('missile:kab'));
+
+    toolGromBtn && (toolGromBtn.onclick = () => setTool('missile:grom'));
+    toolKalibrBtn && (toolKalibrBtn.onclick = () => setTool('missile:kalibr'));
+    toolKinzalBtn && (toolKinzalBtn.onclick = () => setTool('missile:kinzal'));
+    toolX22Btn && (toolX22Btn.onclick = () => setTool('missile:x22'));
+    toolX59Btn && (toolX59Btn.onclick = () => setTool('missile:x59'));
+    toolX69Btn && (toolX69Btn.onclick = () => setTool('missile:x69'));
+    toolX101Btn && (toolX101Btn.onclick = () => setTool('missile:x101'));
+
+    toolTy22Btn && (toolTy22Btn.onclick = () => setTool('plane:ty22'));
+
+    const toolSy34Btn=document.getElementById('toolSy34');
+    const toolMig29Btn=document.getElementById('toolMig29');
+    const toolMig31Btn=document.getElementById('toolMig31');
+    toolSy34Btn&& (toolSy34Btn.onclick=()=>setTool('plane:sy34'));
+    toolMig29Btn&& (toolMig29Btn.onclick=()=>setTool('plane:mig29'));
+    toolMig31Btn&& (toolMig31Btn.onclick=()=>setTool('plane:mig31'));
+
+    toolTy95Btn && (toolTy95Btn.onclick = () => setTool('plane:ty95'));
+    toolTy160Btn && (toolTy160Btn.onclick = () => setTool('plane:ty160'));
+
+    // === RED MODE TOGGLE ===
+// BUTTON IMAGE MAPS
+const buttonImageMap = {
+  'toolShahed':'shahed.png','toolDrone':'heavy-drone.png','toolLancet':'lancet.png',
+  'toolZala':'zala.png','toolSupercum':'supercum.png','toolSu57':'su-57.png','toolOrlan10':'orlan10.png','toolSelect':'select.png',
+  'toolFpv':'fpv.png','toolGerbera':'gerbera.png','toolItalmas':'italmas.png','toolMolnia':'molnia.png','toolReakshahed':'reakshahed.png',
+  'toolGrom':'grom.png','toolKalibr':'kalibr.png','toolKinzal':'kinzal.png','toolX22':'x22.png','toolX59':'x59.png','toolX69':'x69.png','toolX101':'x101.png',
+  'toolTy22':'ty22.png','toolTy95':'ty95.png','toolTy160':'ty160.png','toolSy34':'sy34.png','toolMig29':'mig29.png','toolMig31':'mig31.png', 'toolAkystik':'akystik.png','toolNevidomi':'nevidomi.png','toolKab':'kab.png',
+}
+const buttonImageMapRed = {
+  'toolShahed':'shahedred.png','toolDrone':'heavy-dronered.png','toolLancet':'lancetred.png',
+  'toolZala':'zalared.png','toolSupercum':'supercumred.png','toolSu57':'su-57red.png','toolOrlan10':'orlan10red.png','toolSelect':'select.png',
+  'toolFpv':'fpvred.png','toolGerbera':'gerberared.png','toolItalmas':'italmasred.png','toolMolnia':'molniared.png','toolReakshahed':'reakshahedred.png',
+  'toolGrom':'gromred.png','toolKalibr':'kalibrred.png','toolKinzal':'kinzalred.png','toolX22':'x22red.png','toolX59':'x59red.png','toolX69':'x69red.png','toolX101':'x101red.png',
+  'toolTy22':'ty22red.png','toolTy95':'ty95red.png','toolTy160':'ty160red.png',
+  'toolSy34':'sy34red.png','toolMig29':'mig29red.png','toolMig31':'mig31red.png','toolAkystik':'akystikred.png','toolNevidomi':'nevidomired.png','toolKab':'kabred.png',
+
+
+
+
+
+};
+
+    
+    function applyRedMode(on){
+      redMode = !!on;
+      document.getElementById('toggleRed').classList.toggle('active', redMode);
+      // update desktop buttons to use images (red or normal)
+      if(typeof buttonImageMap !== 'undefined'){
+        for(const id in buttonImageMap){
+          const b = document.getElementById(id);
+          if(!b) continue;
+          const img = redMode ? (buttonImageMapRed[id] || buttonImageMap[id]) : buttonImageMap[id];
+          b.innerHTML = '<img src="assets/' + img + '" width="28" alt="' + id + '">';
+        }
+      }
+      // update mobile top scroller buttons (data-tool)
+      document.querySelectorAll('#mobileTopScroller .mtb-btn[data-tool]').forEach(btn=>{
+        const t = btn.dataset.tool;
+        const name = (t.indexOf(':')>-1)?t.split(':')[1]:t;
+        const url = (ICONS[name] ? (redMode ? ICONS[name][1] : ICONS[name][0]) : (redMode ? name+'red.png' : name+'.png'));
+        btn.innerHTML = '<img src="assets/' + url + '" width="28" alt="' + t + '">';
+      });
+      // update existing markers where applicable
+      for(const item of state.items.values()){
+        item.marker.setIcon( getIconForType(item.type) );
+      }
+    }
+
+
+    document.getElementById('toggleRed').onclick = () => { applyRedMode(!redMode); };
+
+
+    const headingInput = document.getElementById('heading');
+    const headingVal   = document.getElementById('headingVal');
+    // arrowLen removed from UI — use hidden fallback
+    const arrowLenInput = { value: '10', addEventListener: ()=>{} };
+    const arrowLenVal   = { textContent: '' };
+    const countInput   = document.getElementById('count');
+    const deleteBtn    = document.getElementById('deleteBtn');
+    const clearBtn     = document.getElementById('clearBtn');
+    const holdHeadingBtn = document.getElementById('holdHeadingBtn');
+
+    function setHoldHeading(on){
+      state.holdHeading = !!on;
+      holdHeadingBtn.classList.toggle('active', state.holdHeading);
+      holdHeadingBtn.textContent = state.holdHeading ? '🔒' : '🔓';
+    }
+    holdHeadingBtn.onclick = () => setHoldHeading(!state.holdHeading);
+
+    headingInput.addEventListener('input', () => {
+      headingVal.textContent = headingInput.value + '°';
+      if(state.selected) updateHeading(state.selected, headingInput.value);
+    });
+        countInput.addEventListener('input', () => { if(state.selected) updateCount(state.selected, countInput.value); });
+
+    deleteBtn.onclick = () => {
+      const item = state.selected; if(!item) return;
+      map.removeLayer(item.marker);
+      if(item.arrowLine) map.removeLayer(item.arrowLine);
+      if(item.decorator) map.removeLayer(item.decorator);
+      if(item.label) map.removeLayer(item.label);
+      state.items.delete(item.id);
+      state.selected = null;
+      document.getElementById('selectedId').textContent = '—';
+    };
+    clearBtn.onclick = () => {
+      for(const item of state.items.values()){
+        map.removeLayer(item.marker);
+        if(item.arrowLine) map.removeLayer(item.arrowLine);
+        if(item.decorator) map.removeLayer(item.decorator);
+        if(item.label) map.removeLayer(item.label);
+      }
+      state.items.clear();
+      state.selected = null;
+      document.getElementById('selectedId').textContent = '—';
+    };
+
+    map.on('click', (e) => {
+      if(window.calcMode) { return; }
+      if((function(t){ if(!t) return false; const name = t.indexOf(':')>-1? t.split(':')[1] : t; return ['shahed','missile','drone','lancet','zala','supercum','su57','orlan10','launch','prepare','fpv','gerbera','italmas','molnia','reakshahed','grom','kalibr','kinzal','x22','x59','x69','x101','ty22','ty95','ty160','sy34','mig29','mig31','akystik','nevidomi','kab',].includes(name); })(state.tool)) {
+        addItem(state.tool, e.latlng);
+      }
+    });
+
+    // Пошук
+    const searchBox = document.getElementById('searchBox');
+    const searchBtn = document.getElementById('searchBtn');
+    async function searchAndGo(q){
+      const query = (q || '').trim(); if(!query) return;
+      const url = `https://nominatim.openstreetmap.org/search?format=json&limit=5&countrycodes=ua&accept-language=uk&q=${encodeURIComponent(query)}`;
+      try{
+        const res = await fetch(url, { headers: { 'User-Agent': 'Leaflet demo (educational)' } });
+        const results = await res.json();
+        if(results && results.length){
+          const best = results[0]; map.setView([parseFloat(best.lat), parseFloat(best.lon)], 10);
+        }
+      }catch(err){ console.error('Geocode error', err); }
+    }
+    searchBox.addEventListener('keypress', (e) => { if(e.key === 'Enter'){ searchAndGo(searchBox.value); }});
+    searchBtn.addEventListener('click', () => searchAndGo(searchBox.value));
+
+    // Сховати/показати меню
+    const toolbar   = document.getElementById('toolbar');
+    const toggleMenu= document.getElementById('toggleMenu');
+    let hidden = false;
+    toggleMenu.onclick = () => {
+      hidden = !hidden;
+      toolbar.classList.toggle('hidden', hidden);
+      document.getElementById('map').classList.toggle('full', hidden);
+      toggleMenu.textContent = hidden ? '☰ МЕНЮ' : '✕ ЗАКРИТИ';
+      setTimeout(()=>{ if(window.map) map.invalidateSize(); }, 320);
+    };
+  
+// ====================
+// ГРУПОВЕ ВИДІЛЕННЯ ПКМ
+// ====================
+let isRMB=false, startPoint=null, selectionRect=null;
+let selectedItems = new Set();
+
+map.getContainer().addEventListener("contextmenu", e => e.preventDefault());
+
+// лкм — очищення виділення
+map.on("click", () => {
+  for (const item of selectedItems) {
+    if (item.marker._icon) item.marker._icon.classList.remove("marker-selected");
+  }
+  selectedItems.clear();
+  document.getElementById('selectedId').textContent = '—';
+});
+
+map.on("mousedown", e => {
+  if (e.originalEvent.button === 2) {
+    isRMB = true;
+    startPoint = map.latLngToContainerPoint(e.latlng);
+    selectionRect = L.DomUtil.create("div", "selection-rect", document.body);
+    selectionRect.style.left = startPoint.x + "px";
+    selectionRect.style.top = startPoint.y + "px";
+    selectionRect.style.width = "0px";
+    selectionRect.style.height = "0px";
+  }
+});
+
+map.on("mousemove", e => {
+  if (!isRMB || !selectionRect) return;
+  const cur = map.latLngToContainerPoint(e.latlng);
+  const x1 = Math.min(startPoint.x, cur.x);
+  const y1 = Math.min(startPoint.y, cur.y);
+  const x2 = Math.max(startPoint.x, cur.x);
+  const y2 = Math.max(startPoint.y, cur.y);
+  selectionRect.style.left = x1 + "px";
+  selectionRect.style.top = y1 + "px";
+  selectionRect.style.width = (x2 - x1) + "px";
+  selectionRect.style.height = (y2 - y1) + "px";
+});
+
+map.on("mouseup", e => {
+  if (e.originalEvent.button !== 2) return;
+  isRMB = false;
+
+  if (!selectionRect) return;
+
+  const rect = selectionRect.getBoundingClientRect();
+  selectionRect.remove();
+  selectionRect = null;
+
+  // очистити попереднє виділення
+  for (const item of selectedItems) {
+    if (item.marker._icon) item.marker._icon.classList.remove("marker-selected");
+  }
+  selectedItems.clear();
+
+  // знайти нові виділені
+  for (const item of state.items.values()) {
+    const pt = map.latLngToContainerPoint(item.marker.getLatLng());
+    if (pt.x >= rect.left && pt.x <= rect.right &&
+        pt.y >= rect.top && pt.y <= rect.bottom) {
+      selectedItems.add(item);
+      if (item.marker._icon) item.marker._icon.classList.add("marker-selected");
+    }
+  }
+
+  // Оновити показ обраного
+  if (selectedItems.size === 1) {
+    const only = [...selectedItems][0];
+    document.getElementById('selectedId').textContent = only.id;
+    state.selected = only;
+  } else if (selectedItems.size > 1) {
+    document.getElementById('selectedId').textContent = "група (" + selectedItems.size + ")";
+    state.selected = null;
+  }
+});
+
+// Кнопка Видалити — видаляє або 1 або групу
+const oldDelete = deleteBtn.onclick;
+deleteBtn.onclick = () => {
+  if (selectedItems.size > 0) {
+    for (const item of selectedItems) {
+      map.removeLayer(item.marker);
+      if (item.arrowLine) map.removeLayer(item.arrowLine);
+      if (item.decorator) map.removeLayer(item.decorator);
+      if (item.label) map.removeLayer(item.label);
+      state.items.delete(item.id);
+    }
+    selectedItems.clear();
+    document.getElementById('selectedId').textContent = '—';
+    state.selected = null;
+  } else {
+    oldDelete();
+  }
+};
+
+
+// THEME TOGGLE
+const osm = L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png');
+const dark = L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png');
+osm.addTo(map);
+let base='osm';
+document.getElementById('toggleTheme').onclick=()=>{
+  if(base==='osm'){ map.removeLayer(osm); dark.addTo(map); base='dark'; toggleTheme.textContent='☀️';}
+  else{ map.removeLayer(dark); osm.addTo(map); base='osm'; toggleTheme.textContent='🌙';}
+};
+
+
+// HIDE COURSE PANEL
+
+</script>
+
+
+<!-- ISKANDER FLOAT MENU -->
+<div id="iskanderMenu" style="display:none;position:fixed;top:52px;right:12px;width:170px;padding:12px;z-index:9999;">
+ <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;">
+  <b>ISKANDER</b>
+  <button id="iskanderClose">✕</button>
+ </div>
+ <button id="iskanderRangeBtn" class="btn" style="width:100%;margin-top:6px">Круг 500 км</button>
+
+<button id="iskCalcBtn" class="btn" style="width:100%;margin-top:6px">📐 Calculator</button>
+<script>
+(function(){
+  // Calculator mode for Iskander flight time (linear model: 500 km -> 238 s)
+  let iskCalcMode = false;
+  const CALC_LABEL = '📐 Calculator';
+  const CALC_ACTIVE = '📐 Calculator (виберіть ціль)';
+  function formatTimeSec(s){
+    if(s<60) return Math.round(s) + ' s';
+    const m = Math.floor(s/60);
+    const sec = Math.round(s - m*60);
+    return m + 'm ' + sec + 's';
+  }
+  const btn = document.getElementById('iskCalcBtn');
+  if(!btn) return;
+  btn.addEventListener('click', ()=>{
+    iskCalcMode = !iskCalcMode;
+    btn.classList.toggle('active', iskCalcMode);
+    btn.textContent = iskCalcMode ? CALC_ACTIVE : CALC_LABEL;
+    if(iskCalcMode){
+      // temporary instruction popup
+      console.log('Iskander calculator mode ON. Click on map to choose target.');
+    }
+  });
+  // click handler on map
+  function onMapClickForCalc(e){
+    if(!iskCalcMode) return;
+    // find nearest iskander from state.items
+    let nearest = null;
+    let nearestDist = Infinity;
+    try{
+      for(const it of state.items.values()){
+        if(!it || !it.type) continue;
+        if(String(it.type).indexOf('iskander')===-1) continue;
+        const d = map.distance(it.marker.getLatLng(), e.latlng); // in meters
+        if(d < nearestDist){ nearestDist = d; nearest = it; }
+      }
+    }catch(err){
+      console.error('calc: state items error', err);
+    }
+    if(!nearest){
+      L.popup({maxWidth:300}).setLatLng(e.latlng).setContent('Не знайдено Іскандера — додайте спершу.').openOn(map);
+      iskCalcMode = false;
+      btn.classList.remove('active');
+      btn.textContent = CALC_LABEL;
+      return;
+    }
+    const dist_km = nearestDist/1000;
+    // model: T = (D_km / 500) * 238
+    const time_s = (dist_km/500) * 238;
+    const html = ''
+               + 'Відстань: ' + dist_km.toFixed(2) + ' km<br>'
+               + 'Час (приблизно): ' + formatTimeSec(time_s) + ' (' + time_s.toFixed(1) + ' s)';
+    L.popup({maxWidth:320, className:'isk-calc-popup'}).setLatLng(e.latlng).setContent(html).openOn(map);
+    // reset mode
+    iskCalcMode = false;
+    btn.classList.remove('active');
+    btn.textContent = CALC_LABEL;
+  }
+  map.on('click', onMapClickForCalc);
+})();
+</script>
+<button id="iskanderPlace" class="btn" style="width:100%;margin-top:6px"><img src="assets/iskanderm.png" width="20"></button>
+<button id="iskanderTargets" class="btn" style="margin-top:6px;width:100%;">📍 Вкладки міст</button>
+
+<div id="iskanderTabs" style="display:none;margin-top:10px">
+  <button class="iskCity" data-lat="52.681485991530266" data-lng="32.220350079474905">Брянськ</button>
+  <button class="iskCity" data-lat="51.707132778716165" data-lng="36.173290883251255">Курськ</button>
+  <button class="iskCity" data-lat="50.97478475596983" data-lng="39.459647966311564">Вороніж</button>
+  <button class="iskCity" data-lat="47.195269619729764" data-lng="38.85289669192309">Таганрог</button>
+  <button class="iskCity" data-lat="46.68499006845687" data-lng="38.141705348651044">Єйськ</button>
+  <button class="iskCity" data-lat="45.69920503709735" data-lng="34.41968462227438">Джанкой</button>
+</div>
+
+<div id="iskanderControls" style="margin-top:8px;display:none">
+  <label style="font-size:13px;">Кут пуску: <span id="iskAngleVal">0°</span></label>
+  <input id="iskanderAngle" type="range" min="0" max="359" value="0" style="width:100%" />
+</div>
+</div>
+
+
+
+<script>
+document.addEventListener("DOMContentLoaded",()=>{
+
+ let btn=document.getElementById("toolIskander");
+ let menu=document.getElementById("iskanderMenu");
+ let close=document.getElementById("iskanderClose");
+
+ if(btn){
+   btn.onclick=()=>{
+    menu.style.display= menu.style.display==="none"?"block":"none";
+   }
+ }
+
+ if(close){
+   close.onclick=()=> menu.style.display="none";
+ }
+
+ // tabs toggle
+ const tabsBtn = document.getElementById('iskanderTargets');
+ const tabs = document.getElementById('iskanderTabs');
+ if(tabsBtn && tabs) tabsBtn.onclick = ()=> { tabs.style.display = tabs.style.display==='none' ? 'block' : 'none'; };
+
+ // place mode: when clicking place button, next map click will add iskander item via addItem()
+ const placeBtn = document.getElementById('iskanderPlace');
+ if(placeBtn){
+   placeBtn.onclick = ()=>{
+     // show hint briefly
+     placeBtn.textContent = 'Клікніть по карті...';
+     const handler = function(e){
+       // use addItem to integrate with state/items
+       if(typeof addItem === 'function'){
+         addItem('iskander', e.latlng);
+       } else {
+         L.marker(e.latlng,{icon:L.icon({iconUrl:'assets/iskanderm.png',iconSize:[28,28]})}).addTo(map);
+       }
+       // cleanup
+       placeBtn.innerHTML = '<img src="assets/iskanderm.png" width="20">';
+       map.off('click', handler);
+     };
+     map.once('click', handler);
+   };
+ }
+
+ // city buttons
+ document.querySelectorAll('#iskanderTabs .iskCity').forEach(btn=>{
+   btn.addEventListener('click', ()=>{
+     const lat = parseFloat(btn.dataset.lat);
+     const lng = parseFloat(btn.dataset.lng);
+     if(typeof addItem === 'function'){
+       addItem('iskander', L.latLng(lat,lng));
+     } else {
+       L.marker([lat,lng],{icon:L.icon({iconUrl:'assets/iskanderm.png',iconSize:[28,28]})}).addTo(map);
+     }
+     map.setView([lat,lng],8);
+   });
+ });
+
+ // angle control for selected iskander items
+ const angleInput = document.getElementById('iskanderAngle');
+ const angleVal = document.getElementById('iskAngleVal');
+ const controlsBox = document.getElementById('iskanderControls');
+
+ function updateControlsForSelection(){
+   const sel = state.selected;
+   if(!sel || !sel.type || String(sel.type).indexOf('iskander')===-1){ controlsBox.style.display='none'; return; }
+   controlsBox.style.display='block';
+   angleInput.value = sel.headingDeg || 0;
+   angleVal.textContent = angleInput.value + '°';
+ }
+
+ // when heading input changes elsewhere, sync
+ if(angleInput){
+   angleInput.addEventListener('input', ()=>{
+     angleVal.textContent = angleInput.value + '°';
+     if(state.selected && String(state.selected.type).indexOf('iskander')!==-1){
+       updateHeading(state.selected, angleInput.value);
+     }
+   });
+ }
+
+ // watch selection changes periodically to show controls
+ setInterval(updateControlsForSelection,250);
+
+ // ensure red-mode updates iskander icons: when applyRedMode runs it updates all item icons via existing loop
+
+});
+</script>
+<script>
+// === ИСКАНДЕР RANGE CIRCLES ===
+let iskanderCircles=[];
+
+function drawIskanderRanges(){
+  // remove old
+  iskanderCircles.forEach(c=>map.removeLayer(c));
+  iskanderCircles=[];
+  // scan items
+  state.items.forEach(it=>{
+    if(it.type==='iskander'){
+      let c=L.circle(it.marker.getLatLng(),{radius:500000,color:'red',fillColor:'red',fillOpacity:0.1}).addTo(map);
+      iskanderCircles.push(c);
+    }
+  });
+}
+
+const rangeBtn=document.getElementById('iskanderRangeBtn');
+if(rangeBtn){
+  rangeBtn.onclick=()=>{
+    if(iskanderCircles.length>0){
+      iskanderCircles.forEach(c=>map.removeLayer(c));
+      iskanderCircles=[];
+      rangeBtn.style.background='';
+    } else {
+      drawIskanderRanges();
+      rangeBtn.style.background='rgba(255,0,0,0.4)';
+    }
+  };
+}
+</script>
+<script>
+// ISKANDER PRECISE CALCULATOR v23
+(function(){
+  const table = {"50": 43.81, "100": 67.62, "120": 77.14, "140": 86.67, "160": 96.19, "180": 105.71, "200": 115.24, "220": 124.76, "240": 134.29, "260": 143.81, "280": 153.33, "300": 162.86, "320": 172.38, "340": 181.9, "360": 191.43, "380": 200.95, "400": 210.48, "420": 220.0, "440": 229.52, "460": 239.05, "480": 248.57, "500": 258.1};
+  const keys = Object.keys(table).map(k=>parseFloat(k)).sort((a,b)=>a-b);
+
+  function interpolate(d){
+    if(d<=keys[0]) return table[keys[0]];
+    if(d>=keys[keys.length-1]) return table[keys[keys.length-1]];
+    for(let i=0;i<keys.length-1;i++){
+      const a=keys[i], b=keys[i+1];
+      if(d>=a && d<=b){
+        const ta=table[a], tb=table[b];
+        return ta + (d-a)/(b-a)*(tb-ta);
+      }
+    }
+    return null;
+  }
+
+  const btn=document.getElementById('iskCalcBtn');
+  let mode=false;
+  if(btn){
+    btn.addEventListener('click',()=>{
+      mode=!mode;
+      btn.classList.toggle('active',mode);
+    });
+  }
+
+  map.on('click',e=>{
+    if(!mode) return;
+    let nearest=null, nd=1e9;
+    for(const it of state.items.values()){
+      if(!it||!it.type) continue;
+      if(String(it.type).includes('iskander')){
+        const d=map.distance(it.marker.getLatLng(),e.latlng)/1000;
+        if(d<nd){ nd=d; nearest=it; }
+      }
+    }
+    if(!nearest){
+      L.popup().setLatLng(e.latlng).setContent('Не знайдено Іскандера.').openOn(map);
+      mode=false; if(btn) btn.classList.remove('active');
+      return;
+    }
+    const t=interpolate(nd);
+    const mins=Math.floor(t/60);
+    const secs=Math.round(t%60);
+    const msg=`Відстань: ${nd.toFixed(2)} km<br>Час (приблизно): ${mins}m ${secs}s (${t.toFixed(1)} s)`;
+    L.popup().setLatLng(e.latlng).setContent(msg).openOn(map);
+    mode=false; if(btn) btn.classList.remove('active');
+  });
+})();
+</script>
+
+
+<script>
+// --- Selected-ID to Click calculator (toolbar button) ---
+(function(){
+  window.calcMode = false;
+  const btn = document.getElementById('toolCalc');
+  const speedInput = document.getElementById('calcSpeed');
+
+  function formatTimeFromHours(h){
+    if(!isFinite(h) || h<0) return "--:--:--";
+    const totalSec = Math.round(h * 3600);
+    const hh = Math.floor(totalSec/3600);
+    const mm = Math.floor((totalSec%3600)/60);
+    const ss = totalSec % 60;
+    return String(hh).padStart(2,'0') + ':' + String(mm).padStart(2,'0') + ':' + String(ss).padStart(2,'0');
+  }
+
+  if(!btn) return;
+  btn.addEventListener('click', ()=>{
+    window.calcMode = !window.calcMode;
+    btn.classList.toggle('active', calcMode);
+    btn.style.background = calcMode ? '#eef2ff' : '';
+    btn.title = calcMode ? 'Клікніть на карту щоб розрахувати (від обраного ID)' : 'Калькулятор';
+    if(calcMode){
+      // small hint
+      const sel = document.getElementById('selectedId');
+      if(sel && sel.textContent === '—'){
+        alert('Спочатку виберіть ціль (натисніть на маркер щоб встановити обраний ID).');
+      }
+    }
+  });
+
+  // map click handler
+  map.on('click', function(e){
+    if(!window.calcMode) return;
+    const sel = state.selected;
+    if(!sel || !sel.marker){
+      L.popup().setLatLng(e.latlng).setContent('Спочатку виберіть ціль (ID) з toolbar.').openOn(map);
+      calcMode = false; btn.classList.remove('active'); btn.style.background='';
+      return;
+    }
+    // speed from input in km/h
+    let spdKmh = Number(speedInput.value);
+    if(!spdKmh || spdKmh <= 0){
+      L.popup().setLatLng(e.latlng).setContent('Вкажіть швидкість у полі поруч з кнопкою (км/год).').openOn(map);
+      return;
+    }
+    const spdMps = spdKmh / 3.6;
+    const A = sel.marker.getLatLng();
+    const B = e.latlng;
+    const dist_m = map.distance(A, B);
+    const dist_km = dist_m/1000;
+    const time_h = dist_km / spdKmh; // hours
+    const time_str = formatTimeFromHours(time_h);
+
+    const html = 'Відстань: <b>' + dist_km.toFixed(2) + ' км</b><br>' +
+                 'Час підльоту : <b>' + time_str + '</b>';
+    L.popup({offset:[0,-10], maxWidth:320}).setLatLng(B).setContent(html).openOn(map);
+    // after calculation, disable calculator (single-use) and update UI
+    window.calcMode = false; btn.classList.remove('active'); btn.style.background=''; btn.title='Калькулятор';
+  });
+})();
+</script>
+
+
+
+
+<!-- BEGIN: BASES INTEGRATION (added by assistant) -->
+<script>
+document.addEventListener("DOMContentLoaded", function(){
+  try{
+    // create button near Iskander if exists
+    const iskBtn = document.getElementById('toolIskander');
+    if(iskBtn){
+      const btn = document.createElement('button');
+      btn.id = 'toolBases';
+      btn.className = 'btn';
+      btn.title = 'Показати/приховати бази (аеродроми / порти / пускові рубежі)';
+      btn.innerHTML = '<img src=\"assets/aerodrom.png\" width=\"24\" style=\"vertical-align:middle\"> Бази';
+      // insert after iskander
+      iskBtn.parentNode.insertBefore(btn, iskBtn.nextSibling);
+    }
+
+    // Define icons (assumes PNGs are in assets/ as you said)
+    const BASE_ICONS = {
+      aerodrom: L.icon({ iconUrl: 'assets/aerodrom.png', iconSize: [24,24], iconAnchor: [12,12] }),
+      port: L.icon({ iconUrl: 'assets/port.png', iconSize: [24,24], iconAnchor: [12,12] }),
+      pyskovi: L.icon({ iconUrl: 'assets/pyskovi.png', iconSize: [24,24], iconAnchor: [12,12] })
+    };
+
+    // Layer groups
+    const layerPorts = L.layerGroup();
+    const layerAerodroms = L.layerGroup();
+    const layerPyskovi = L.layerGroup();
+
+    // Data arrays (user-provided)
+    const PORTS = [
+      {name: 'Порт Новороссииск', typeHtml: 'Тип:<br>Морська база', lat:44.73026131359624, lon:37.77961809657306},
+      {name: 'Порт Феодосия', typeHtml: 'Тип:<br>Морська база', lat:45.028359541432664, lon:35.388517572843405}
+    ];
+
+    const AERODROMS = [
+      {name:'Аеродром Ахтубинськ', typeHtml:'Тип:<br>аеродром базування Міг-31К/Су-57<br>', lat:48.311023379685224, lon:46.23508954390092},
+      {name:'Аеродром Энгельс-2', typeHtml:'Тип:<br>аеродром базування С/a<br>(Ту-22М3 / Ту-95МС / Ту-160)', lat:51.47881572481256, lon:46.21604021028831},
+      {name:'Аеродром Оленья', typeHtml:'Тип:<br>аеродром базування С/a<br>(Ту-22М3 / Ту-95МС / Ту-160)', lat:68.15041333920556, lon:33.4634659603424},
+      {name:'Аеродром Саваслейка', typeHtml:'Тип:<br>аеродром базування МіГ-31К', lat:55.43927467759712, lon:42.3072692199759},
+      {name:'Аеродром Шайковка', typeHtml:'Тип:<br>аеродром базування С/a<br>(Ту-22М3)', lat:54.21979570538821, lon:34.36910478611481},
+      {name:'Аеродром Дягилево', typeHtml:'Тип:<br>аеродром базування С/a<br>(Ту-22М3 / Ту-95МС / Ту-160)', lat:54.644071882530596, lon:39.572582244873054},
+      {name:'Аеродром Українка', typeHtml:'Тип:<br>аеродром базування С/a<br>(Ту-22М3 / Ту-95МС / Ту-160)', lat:51.16777482541429, lon:128.45018551102842},
+      {name:'Аеродром Белая', typeHtml:'Тип:<br>аеродром базування С/a<br>(Ту-22М3 / Ту-95МС / Ту-160)', lat:52.91672056197615, lon:103.5613592885136}
+    ];
+
+    const PUSKOVI = [
+      {name:'Приморсько-Ахтарськ', typeHtml:'Тип:<br>пускові рубежі БпЛА', lat:46.05792111281194, lon:38.24016403804927},
+      {name:'Орел південний', typeHtml:'Тип:<br>пускові рубежі БпЛА', lat:52.93678110330605, lon:36.00720292701847},
+      {name:'Шаталово', typeHtml:'Тип:<br>пускові рубежі БпЛА', lat:54.33989156533011, lon:32.474958134622},
+      {name:'Халино', typeHtml:'Тип:<br>пускові рубежі БпЛА', lat:51.751416145824045, lon:36.296137330939324},
+      {name:'Навля', typeHtml:'Тип:<br>пускові рубежі БпЛА', lat:52.82064968394764, lon:34.46009866314555},
+      {name:'Міллерово', typeHtml:'Тип:<br>пускові рубежі БпЛА', lat:48.953780958979465, lon:40.296553507452},
+      {name:'Чауда', typeHtml:'Тип:<br>пускові рубежі БпЛА', lat:45.00394622343219, lon:35.83282945404451},
+      {name:'Гвардійське', typeHtml:'Тип:<br>пускові рубежі БпЛА', lat:45.115379120986255, lon:33.97750843611914},
+      {name:'Донецьк', typeHtml:'Тип:<br>пускові рубежі БпЛА', lat:48.07312564901885, lon:37.72403294548008},
+      {name:'Бердянськ', typeHtml:'Тип:<br>пускові рубежі БпЛА', lat:46.81444387525987, lon:36.75977353111913},
+      {name:'Цимбулова', typeHtml:'Тип:<br>пускові рубежі БпЛА', lat:53.36790841518659, lon:35.79925412699912},
+      {name:'Сеща', typeHtml:'Тип:<br>пускові рубежі БпЛА', lat:53.715344618450665, lon:33.344227317526745},
+      {name:'Приморськ', typeHtml:'Тип:<br>пускові рубежі БпЛА', lat:46.74374562689557, lon:36.32924659407675},
+      {name:'Кача', typeHtml:'Тип:<br>пускові рубежі БпЛА', lat:44.77892410919237, lon:33.571243679459165},
+      {name:'Шахти', typeHtml:'Тип:<br>пускові рубежі БпЛА', lat:47.69907927264756, lon:40.285347870501774},
+      {name:'Асовиця', typeHtml:'Тип:<br>пускові рубежі БпЛА', lat:52.33334248680737, lon:34.50313078671684}
+    ];
+
+    // helper to create tooltip content WITHOUT coordinates
+    function makeBaseTooltip(d){
+      // d.typeHtml already contains 'Тип:<br>...'
+      return '<strong>' + d.name + '</strong><br>' + d.typeHtml;
+    }
+
+    // add markers to respective layers
+    PORTS.forEach(p => {
+      const m = L.marker([p.lat, p.lon], {icon: BASE_ICONS.port}).bindTooltip(makeBaseTooltip(p), {className:'mytooltip', direction:'top'});
+      layerPorts.addLayer(m);
+    });
+    AERODROMS.forEach(a => {
+      const m = L.marker([a.lat, a.lon], {icon: BASE_ICONS.aerodrom}).bindTooltip(makeBaseTooltip(a), {className:'mytooltip', direction:'top'});
+      layerAerodroms.addLayer(m);
+    });
+    PUSKOVI.forEach(p => {
+      const m = L.marker([p.lat, p.lon], {icon: BASE_ICONS.pyskovi}).bindTooltip(makeBaseTooltip(p), {className:'mytooltip', direction:'top'});
+      layerPyskovi.addLayer(m);
+    });
+
+    // control: show/hide all bases
+    let basesVisible = false;
+    function showBases(on){
+      basesVisible = !!on;
+      if(basesVisible){
+        layerPorts.addTo(map);
+        layerAerodroms.addTo(map);
+        layerPyskovi.addTo(map);
+        const tb = document.getElementById('toolBases'); if(tb) tb.classList.add('active');
+      } else {
+        map.removeLayer(layerPorts);
+        map.removeLayer(layerAerodroms);
+        map.removeLayer(layerPyskovi);
+        const tb = document.getElementById('toolBases'); if(tb) tb.classList.remove('active');
+      }
+    }
+
+    // wire button
+    const basesBtn = document.getElementById('toolBases');
+    if(basesBtn){ basesBtn.addEventListener('click', ()=> showBases(!basesVisible)); }
+
+    // expose for debugging
+    window.__BASES = { PORTS, AERODROMS, PUSKOVI, layerPorts, layerAerodroms, layerPyskovi, showBases };
+
+  }catch(err){
+    console.error('Bases injection error', err);
+  }
+});
+</script>
+<!-- END: BASES INTEGRATION -->
+
+
+<!-- BEGIN: Movement engine inserted by assistant -->
+<script>
+(function(){
+  const SPEEDS = {
+    'shahed': 51.4,
+    'lancet': 26.4,
+    'zala': 30.6,
+    'fpv': 25.0,
+    'gerbera': 40.0,
+    'su57': 400,
+    'plane:sy34': 450,
+    'plane:mig29': 400.6,
+    'plane:mig31': 700,
+    'plane:ty22': 470,
+    'plane:ty95': 250,
+    'plane:ty160': 470,
+    'orlan10': 35,
+    'supercam': 26,
+    'uav:fpv': 25.0,
+    'uav:gerbera': 40.0,
+    'uav:italmas': 30,
+    'uav:molnia': 25,
+    'uav:reakshahed': 100,
+    'drone': 30,
+    'missile:grom': 350,
+    'missile:kalibr': 250,
+    'missile:kinzal': 3000,
+    'missile:x22': 1277.8,
+    'missile:x59': 265,
+    'missile:x69': 260,
+    'missile:x101': 272,
+    'oniks': 884.0,
+    'italmas': 30,
+    'kh69': 260,
+    'kh22': 1277.8,
+    'kh59': 265,
+    'kh101': 272,
+    'missile:kab': 250,
+    'missile:x101': 272
+  };
+
+  // movement state
+  window.__movement = window.__movement || { enabled:false, lastTs: Date.now() };
+
+  const btn = document.getElementById('toolMove');
+  if(btn){
+    btn.addEventListener('click', ()=> {
+      window.__movement.enabled = !window.__movement.enabled;
+      btn.classList.toggle('active', window.__movement.enabled);
+      btn.textContent = window.__movement.enabled ? '🛑 Стоп' : '🛫 Рух';
+      // reset timer
+      window.__movement.lastTs = Date.now();
+      if(window.__movement.enabled && !window.__movement.interval){
+        window.__movement.interval = setInterval(updateMovement, 60);
+      } else if(!window.__movement.enabled && window.__movement.interval){
+        clearInterval(window.__movement.interval);
+        window.__movement.interval = null;
+      }
+    });
+  }
+
+  function getSpeedForType(type){
+    // user requested matching by FULL type string
+    if(!type) return null;
+    return SPEEDS[type] || null;
+  }
+
+  // Reuse destinationPoint present in the file
+  function updateMovement(){
+    const now = Date.now();
+    const dt = (now - (window.__movement.lastTs || now)) / 1000.0; // seconds
+    window.__movement.lastTs = now;
+    if(dt <= 0) return;
+    try{
+      for(const item of state.items.values()){
+        if(!item || !item.type || !item.marker) continue;
+        const sp = getSpeedForType(item.type);
+        if(!sp || !isFinite(sp)) continue;
+        // distance to move in km (destinationPoint expects km)
+        const distKm = (sp * dt) / 1000.0;
+        // use item's headingDeg (if missing, try 0)
+        const bearing = (typeof item.headingDeg === 'number') ? item.headingDeg : 0;
+        const cur = item.marker.getLatLng();
+        if(!cur || !isFinite(cur.lat) || !isFinite(cur.lng)) continue;
+        const dest = destinationPoint(cur.lat, cur.lng, bearing, distKm);
+        // move marker
+        item.marker.setLatLng(dest);
+        // keep rotation
+        if(typeof item.marker.setRotationAngle === 'function') item.marker.setRotationAngle(bearing);
+        // update arrow and label if functions available
+        if(typeof createArrowFor === 'function') {
+          try{ createArrowFor(item); }catch(e){ /* ignore */ }
+        }
+        if(typeof updateLabel === 'function') {
+          try{ updateLabel(item); }catch(e){ /* ignore */ }
+        }
+      }
+    }catch(err){
+      console.error('movement update error', err);
+    }
+  }
+
+  // ensure interval exists only when enabled
+  // (don't start automatically)
+})();
+</script>
+<!-- END: Movement engine -->
+
+
+<script>
+document.getElementById('toggleCount')?.addEventListener('click', ()=>{
+  const inp=document.getElementById('count');
+  if(!inp)return;
+  inp.disabled=!inp.disabled;
+  document.getElementById('toggleCount').textContent = inp.disabled?'OFF':'ON';
+});
+</script>
+
+
+<script>
+window.__hideCount = false;
+document.getElementById('toggleCount')?.addEventListener('click', ()=>{
+  window.__hideCount = !window.__hideCount;
+  document.getElementById('toggleCount').textContent = window.__hideCount?'OFF':'ON';
+  // update all labels
+  if(window.state && state.items){
+    for(const it of state.items.values()){
+      if(typeof updateLabel==='function') updateLabel(it);
+    }
+  }
+});
+</script> 
+
+<script>
+let wmVisible2 = true;
+document.getElementById('wmToggleBtn2').onclick=()=>{
+ wmVisible2=!wmVisible2;
+ document.querySelector('.watermark').style.display=wmVisible2?'flex':'none';
+ document.getElementById('wmToggleBtn2').classList.toggle('active',wmVisible2);
+};
+</script>
+
+<script>
+// ── FILTER BUTTONS ──
+(function(){
+  const groups={
+    uav:['lancet','zala','supercum','orlan','shahed','fpv','gerbera','italmas','molnia','reakshahed','drone','akystik','nevidomi'],
+    plane:['su57','ty22','ty95','ty160','sy34','mig29','mig31'],
+    missile:['grom','kalibr','kinzal','x22','x59','x69','x101','kab']
+  };
+  document.querySelectorAll('.filterBtn').forEach(b=>{
+    b.addEventListener('click', ()=>{
+      document.querySelectorAll('.filterBtn').forEach(x=>x.classList.remove('active-filter'));
+      b.classList.add('active-filter');
+      const t = b.dataset.type;
+      document.querySelectorAll('.unit-grid .btn[id^="tool"]').forEach(btn=>{
+        const id = btn.id.toLowerCase().replace('tool','');
+        if(t==='all') btn.style.display='';
+        else if(groups[t] && groups[t].some(k=>id.includes(k))) btn.style.display='';
+        else btn.style.display='none';
+      });
+    });
+  });
+})();
+</script>
+
+<!-- UR PANEL -->
+<div id="urPanel">
+  <h4>УПРАВЛІННЯ РУХОМ <button id="urCloseBtn">✕</button></h4>
+
+  <div class="ur-row">
+    <label>ШВ:</label>
+    <button class="ur-spd-btn active" data-mult="1">×1</button>
+    <button class="ur-spd-btn" data-mult="2">×2</button>
+    <button class="ur-spd-btn" data-mult="4">×4</button>
+    <button class="ur-spd-btn" data-mult="8">×8</button>
+    <button class="ur-spd-btn" data-mult="16">×16</button>
+    <button class="ur-spd-btn" data-mult="32">×32</button>
+    <button class="ur-spd-btn" data-mult="64">×64</button>
+    <button class="ur-spd-btn" data-mult="128">×128</button>
+    <button class="ur-spd-btn" data-mult="256">×256</button>
+  </div>
+
+  <div class="ur-row">
+    <button class="ur-ctrl-btn" id="urTrackBtn">✏️ МАЛ ТРЕК</button>
+    <button class="ur-ctrl-btn" id="urPBtn">П: ВИМК</button>
+  </div>
+
+  <div class="ur-row">
+    <button class="ur-ctrl-btn" id="urConfirmBtn" style="display:none;">✔ ПІДТВЕРДИТИ</button>
+    <button class="ur-ctrl-btn" id="urChangeBtn"  style="display:none;">✏ ЗМІНИТИ</button>
+    <button class="ur-ctrl-btn" id="urFinishBtn"  style="display:none;">⏹ ЗАВЕРШИТИ</button>
+  </div>
+
+  <div class="ur-row">
+    <button class="ur-ctrl-btn" id="urPathBtn">🗺 МАЛ ШЛЯХ</button>
+  </div>
+  <div id="urStatus">Готово</div>
+</div>
+
+<script>
+document.addEventListener('DOMContentLoaded', function(){
+  // =============================================
+  // UR PANEL: speed multiplier, track, path
+  // =============================================
+
+  const urPanel    = document.getElementById('urPanel');
+  const urToggleBtn= document.getElementById('toolUR');
+  const urCloseBtn = document.getElementById('urCloseBtn');
+
+  // Toggle panel
+  urToggleBtn.addEventListener('click', ()=>{
+    const visible = urPanel.style.display !== 'none';
+    urPanel.style.display = visible ? 'none' : 'block';
+    urToggleBtn.classList.toggle('active', !visible);
+  });
+  urCloseBtn.addEventListener('click', ()=>{
+    urPanel.style.display = 'none';
+    urToggleBtn.classList.remove('active');
+  });
+
+  // ---- ШВИДКІСТЬ ----
+  window.__urSpeedMult = 1;
+  document.querySelectorAll('.ur-spd-btn').forEach(btn => {
+    btn.addEventListener('click', ()=>{
+      document.querySelectorAll('.ur-spd-btn').forEach(b => b.classList.remove('active'));
+      btn.classList.add('active');
+      window.__urSpeedMult = parseFloat(btn.dataset.mult);
+    });
+  });
+
+  function setStatus(msg){
+    const el = document.getElementById('urStatus');
+    if(el) el.textContent = msg;
+  }
+
+  // ---- П (видалення при досягненні кінця треку) ----
+  let removeOnTrackEnd = false;
+  const urPBtn = document.getElementById('urPBtn');
+  urPBtn.addEventListener('click', ()=>{
+    removeOnTrackEnd = !removeOnTrackEnd;
+    urPBtn.textContent = 'П: ' + (removeOnTrackEnd ? 'Ввімк' : 'Вимк');
+    urPBtn.classList.toggle('active', removeOnTrackEnd);
+  });
+
+  // ---- МАЛ ШЛЯХ ----
+  let drawPathEnabled = false;
+  const urPathBtn = document.getElementById('urPathBtn');
+  urPathBtn.addEventListener('click', ()=>{
+    drawPathEnabled = !drawPathEnabled;
+    urPathBtn.textContent = '🗺 Мал шлях: ' + (drawPathEnabled ? 'Ввімк' : 'Вимк');
+    urPathBtn.classList.toggle('active', drawPathEnabled);
+    for(const item of state.items.values()){
+      if(drawPathEnabled) initItemPath(item);
+      else cleanItemPath(item);
+    }
+  });
+
+  function initItemPath(item){
+    if(!drawPathEnabled || item.pathPolyline) return;
+    item.pathHistory = [item.marker.getLatLng()];
+    item.pathPolyline = L.polyline(item.pathHistory, {color:'#f59e0b', weight:2, opacity:0.85}).addTo(map);
+  }
+  function cleanItemPath(item){
+    if(item.pathPolyline){ try{ map.removeLayer(item.pathPolyline); }catch(e){} item.pathPolyline = null; }
+    item.pathHistory = [];
+  }
+  function updateItemPath(item){
+    if(!drawPathEnabled || !item.pathPolyline) return;
+    const cur = item.marker.getLatLng();
+    const last = item.pathHistory && item.pathHistory[item.pathHistory.length-1];
+    if(!last || last.lat !== cur.lat || last.lng !== cur.lng){
+      item.pathHistory.push(cur);
+      item.pathPolyline.setLatLngs(item.pathHistory);
+    }
+  }
+
+  // ---- МАЛ ТРЕК ----
+  window.isDrawingTrack = false;
+  let trackingItem  = null;   // ціль яка зараз малюється
+  let trackPoints   = [];     // поточні точки що малюються
+  let tempTrackLine = null;   // preview лінія під час малювання
+  // Map<itemId, L.Polyline> — збережені підтверджені preview лінії (видимі тільки в режимі малювання)
+  const confirmedTrackLines = new Map();
+
+  const urTrackBtn   = document.getElementById('urTrackBtn');
+  const urConfirmBtn = document.getElementById('urConfirmBtn');
+  const urChangeBtn  = document.getElementById('urChangeBtn');
+  const urFinishBtn  = document.getElementById('urFinishBtn');
+
+  // Показати/сховати підтверджені лінії залежно від режиму
+  function showConfirmedLines(show){
+    confirmedTrackLines.forEach(line => {
+      try{ show ? line.addTo(map) : map.removeLayer(line); }catch(e){}
+    });
+  }
+
+  // Перемкнутись на нову ціль під час малювання
+  function switchTrackTarget(item){
+    // Стерти поточне намальоване (непідтверджене) від попередньої цілі
+    if(tempTrackLine){ try{ map.removeLayer(tempTrackLine); }catch(e){} tempTrackLine = null; }
+    // Стерти підтверджений маршрут попередньої цілі якщо він є (щоб перемалювати)
+    // НЕ стираємо — лише скидаємо поточне малювання
+
+    trackingItem = item;
+    trackPoints  = [item.marker.getLatLng()];
+    tempTrackLine = L.polyline(trackPoints, {color:'blue', weight:3, dashArray:'5,10'}).addTo(map);
+
+    // Якщо у цієї цілі вже є підтверджений маршрут — показати кнопку Змінити
+    updateTrackButtons();
+    setStatus('ID ' + item.id + (item.track ? ' (є маршрут — підтвердіть або змініть)' : '') + ': клікайте точки');
+  }
+
+  function updateTrackButtons(){
+    const hasTrack = trackingItem && trackingItem.track && trackingItem.track.length > 1;
+    // Підтвердити — завжди видима в режимі малювання якщо є хоч 2 точки
+    urConfirmBtn.style.display = 'inline-block';
+    // Змінити — тільки якщо у цілі вже є збережений маршрут
+    urChangeBtn.style.display  = hasTrack ? 'inline-block' : 'none';
+    urFinishBtn.style.display  = 'inline-block';
+  }
+
+  // Вхід в режим малювання
+  urTrackBtn.addEventListener('click', ()=>{
+    if(!window.isDrawingTrack){
+      if(!state.selected){
+        setStatus('⚠ Спочатку натисніть на маркер цілі!');
+        return;
+      }
+      // Вмикаємо режим
+      window.isDrawingTrack = true;
+      const selBtn = document.getElementById('toolSelect');
+      if(selBtn) selBtn.click();
+      map.getContainer().style.cursor = 'crosshair';
+      urTrackBtn.textContent = '✏️ Мал трек (вкл)';
+      urTrackBtn.classList.add('active');
+      urConfirmBtn.style.display = 'inline-block';
+      urFinishBtn.style.display  = 'inline-block';
+      map.on('click', onMapClickTrack);
+      // Показати всі підтверджені лінії
+      showConfirmedLines(true);
+      // Почати малювання від поточної цілі
+      switchTrackTarget(state.selected);
+    }
+  });
+
+  // Клік по карті — додає точку
+  function onMapClickTrack(e){
+    if(!window.isDrawingTrack || window.calcMode) return;
+    trackPoints.push(e.latlng);
+    if(tempTrackLine) map.removeLayer(tempTrackLine);
+    tempTrackLine = L.polyline(trackPoints, {color:'blue', weight:3, dashArray:'5,10'}).addTo(map);
+    setStatus('ID ' + trackingItem.id + ': точок — ' + (trackPoints.length-1));
+    updateTrackButtons();
+  }
+
+  // Підтвердити — зберегти маршрут для поточної цілі, залишитись в режимі
+  urConfirmBtn.addEventListener('click', ()=>{
+    if(!trackingItem || trackPoints.length < 2){
+      setStatus('⚠ Недостатньо точок!');
+      return;
+    }
+    // Зберегти маршрут
+    trackingItem.track      = trackPoints.slice();
+    trackingItem.trackIndex = 0;
+    trackingItem.trackDone  = false;
+
+    // Зберегти підтверджену лінію (видима тільки в режимі малювання)
+    if(confirmedTrackLines.has(trackingItem.id)){
+      try{ map.removeLayer(confirmedTrackLines.get(trackingItem.id)); }catch(e){}
+    }
+    const savedLine = L.polyline(trackPoints, {color:'#22c55e', weight:2, dashArray:'4,6', opacity:0.8}).addTo(map);
+    confirmedTrackLines.set(trackingItem.id, savedLine);
+
+    // Стерти preview
+    if(tempTrackLine){ try{ map.removeLayer(tempTrackLine); }catch(e){} tempTrackLine = null; }
+    trackPoints = [trackingItem.marker.getLatLng()];
+    tempTrackLine = L.polyline(trackPoints, {color:'blue', weight:3, dashArray:'5,10'}).addTo(map);
+
+    updateTrackButtons();
+    setStatus('✔ Маршрут ID ' + trackingItem.id + ' збережено. Оберіть іншу ціль або натисніть "Завершити"');
+  });
+
+  // Змінити — скинути маршрут поточної цілі і почати малювати заново
+  urChangeBtn.addEventListener('click', ()=>{
+    if(!trackingItem) return;
+    // Стерти збережений маршрут
+    trackingItem.track = null;
+    trackingItem.trackIndex = 0;
+    trackingItem.trackDone  = false;
+    if(confirmedTrackLines.has(trackingItem.id)){
+      try{ map.removeLayer(confirmedTrackLines.get(trackingItem.id)); }catch(e){}
+      confirmedTrackLines.delete(trackingItem.id);
+    }
+    // Стерти preview і почати заново
+    if(tempTrackLine){ try{ map.removeLayer(tempTrackLine); }catch(e){} tempTrackLine = null; }
+    trackPoints  = [trackingItem.marker.getLatLng()];
+    tempTrackLine = L.polyline(trackPoints, {color:'blue', weight:3, dashArray:'5,10'}).addTo(map);
+    updateTrackButtons();
+    setStatus('ID ' + trackingItem.id + ': маршрут скинуто — малюйте новий');
+  });
+
+  // Завершити — вийти з режиму малювання
+  urFinishBtn.addEventListener('click', ()=>{
+    window.isDrawingTrack = false;
+    map.off('click', onMapClickTrack);
+    map.getContainer().style.cursor = '';
+    // Стерти поточний preview
+    if(tempTrackLine){ try{ map.removeLayer(tempTrackLine); }catch(e){} tempTrackLine = null; }
+    trackingItem = null;
+    trackPoints  = [];
+    // Сховати всі підтверджені лінії (вони тільки для режиму малювання)
+    showConfirmedLines(false);
+    // Скинути UI
+    urTrackBtn.textContent = '✏️ Мал трек';
+    urTrackBtn.classList.remove('active');
+    urConfirmBtn.style.display = 'none';
+    urChangeBtn.style.display  = 'none';
+    urFinishBtn.style.display  = 'none';
+    setStatus('Готово');
+  });
+
+  // Перевизначаємо selectItem — при кліку на ціль в режимі малювання перемикаємось на неї
+  const _origSelectItem = window.selectItem;
+  // Патчимо через спостереження за selectedId (надійніше ніж перевизначати функцію)
+  // Вішаємо обробник на всі маркери при додаванні нової цілі — робиться в addItem
+  // Тому замість цього спостерігаємо через MutationObserver на selectedId
+  const selectedIdEl = document.getElementById('selectedId');
+  if(selectedIdEl){
+    new MutationObserver(()=>{
+      if(!window.isDrawingTrack) return;
+      const txt = selectedIdEl.textContent.trim();
+      if(!txt || txt === '—' || txt.startsWith('група')) return;
+      const id = parseInt(txt, 10);
+      if(isNaN(id) || !state.items.has(id)) return;
+      const item = state.items.get(id);
+      // Якщо це інша ціль — перемикаємось
+      if(!trackingItem || item.id !== trackingItem.id){
+        switchTrackTarget(item);
+      }
+    }).observe(selectedIdEl, {childList:true, characterData:true, subtree:true});
+  }
+
+  // ---- РУШІЙ РУХУ (замінює оригінальний) ----
+  const SPEEDS_UR = {
+    'shahed':51.4,'lancet':26.4,'zala':30.6,'fpv':25,'gerbera':40,'su57':400,
+    'plane:sy34':450,'plane:mig29':400.6,'plane:mig31':700,'plane:ty22':470,
+    'plane:ty95':250,'plane:ty160':470,'orlan10':35,'supercam':26,
+    'uav:fpv':25,'uav:gerbera':40,'uav:italmas':30,'uav:molnia':25,'uav:reakshahed':100,
+    'drone':30,'missile:grom':350,'missile:kalibr':250,'missile:kinzal':3000,
+    'missile:x22':1277.8,'missile:x59':265,'missile:x69':260,'missile:x101':272,
+    'oniks':884,'italmas':30,'kh69':260,'kh22':1277.8,'kh59':265,'kh101':272,'missile:kab':250
+  };
+  function getSpeedUR(type){ return type ? (SPEEDS_UR[type] || null) : null; }
+
+  // Чекаємо поки __movement з'явиться, потім підміняємо рушій
+  function patchEngine(){
+    if(!window.__movement){ setTimeout(patchEngine, 200); return; }
+
+    // Зупиняємо старий інтервал
+    if(window.__movement.interval){ clearInterval(window.__movement.interval); window.__movement.interval = null; }
+
+    // Підміняємо кнопку "Рух" щоб вона запускала наш рушій
+    const oldMoveBtn = document.getElementById('toolMove');
+    if(oldMoveBtn){
+      const newMoveBtn = oldMoveBtn.cloneNode(true);
+      oldMoveBtn.parentNode.replaceChild(newMoveBtn, oldMoveBtn);
+      newMoveBtn.addEventListener('click', ()=>{
+        window.__movement.enabled = !window.__movement.enabled;
+        newMoveBtn.classList.toggle('active', window.__movement.enabled);
+        newMoveBtn.textContent = window.__movement.enabled ? '🛑 Стоп' : '🛫 Рух';
+        window.__movement.lastTs = Date.now();
+        if(window.__movement.enabled && !window.__movement.interval){
+          window.__movement.interval = setInterval(urTick, 60);
+        } else if(!window.__movement.enabled && window.__movement.interval){
+          clearInterval(window.__movement.interval);
+          window.__movement.interval = null;
+        }
+      });
+    }
+  }
+  setTimeout(patchEngine, 600);
+
+  function urTick(){
+    if(!window.__movement || !window.__movement.enabled) return;
+    const now = Date.now();
+    const dt  = (now - (window.__movement.lastTs || now)) / 1000.0;
+    window.__movement.lastTs = now;
+    if(dt <= 0) return;
+
+    const mult = window.__urSpeedMult || 1;
+    const toRemove = [];
+
+    try{
+      for(const item of state.items.values()){
+        if(!item || !item.type || !item.marker) continue;
+        const sp = getSpeedUR(item.type);
+        if(!sp || !isFinite(sp)) continue;
+
+        // Якщо ціль зупинена на кінці треку — не рухаємо
+        if(item.trackDone) continue;
+
+        const distKm = (sp * mult * dt) / 3600.0;
+
+        if(item.track && item.track.length > 0 && item.trackIndex < item.track.length){
+          // Рух по треку (вейпоінт-стиль як у референсі)
+          const target  = item.track[item.trackIndex];
+          const cur     = item.marker.getLatLng();
+          const distToTarget = map.distance(cur, target) / 1000;
+
+          if(distKm >= distToTarget){
+            item.marker.setLatLng(target);
+            item.trackIndex++;
+            if(item.trackIndex >= item.track.length){
+              // Кінець треку
+              item.trackDone = true;
+              // Прибрати лінію треку
+              if(item.tempTrackLine){ try{ map.removeLayer(item.tempTrackLine); }catch(e){} item.tempTrackLine = null; }
+              if(removeOnTrackEnd){
+                toRemove.push(item);
+              }
+            }
+          } else {
+            // Обчислити bearing до наступного вейпоінту
+            const bearing = computeBearingUR(cur, target);
+            const dest = (typeof destinationPoint==='function')
+              ? destinationPoint(cur.lat, cur.lng, bearing, distKm)
+              : [cur.lat + distKm*0.009, cur.lng];
+            item.marker.setLatLng(L.latLng(dest[0], dest[1]));
+            item.headingDeg = bearing;
+            if(typeof item.marker.setRotationAngle==='function') item.marker.setRotationAngle(bearing);
+          }
+        } else if(!item.trackDone){
+          // Вільний політ
+          const bearing = typeof item.headingDeg==='number' ? item.headingDeg : 0;
+          const cur = item.marker.getLatLng();
+          if(!cur || !isFinite(cur.lat)) continue;
+          const dest = (typeof destinationPoint==='function')
+            ? destinationPoint(cur.lat, cur.lng, bearing, distKm)
+            : [cur.lat + distKm*0.009, cur.lng];
+          item.marker.setLatLng(L.latLng(dest[0], dest[1]));
+          if(typeof item.marker.setRotationAngle==='function') item.marker.setRotationAngle(bearing);
+        }
+
+        if(typeof createArrowFor==='function') try{ createArrowFor(item); }catch(e){}
+        if(typeof updateLabel==='function')    try{ updateLabel(item);    }catch(e){}
+        updateItemPath(item);
+
+        // Ініціалізувати шлях для нових цілей
+        if(drawPathEnabled && !item.pathPolyline) initItemPath(item);
+      }
+    }catch(err){ console.error('urTick error', err); }
+
+    for(const item of toRemove){
+      try{
+        map.removeLayer(item.marker);
+        if(item.arrowLine) map.removeLayer(item.arrowLine);
+        if(item.decorator) map.removeLayer(item.decorator);
+        if(item.label) map.removeLayer(item.label);
+        cleanItemPath(item);
+        if(item.tempTrackLine){ try{ map.removeLayer(item.tempTrackLine); }catch(e){} item.tempTrackLine = null; }
+        if(state.selected===item){ state.selected=null; document.getElementById('selectedId').textContent='—'; }
+        state.items.delete(item.id);
+      }catch(e){}
+    }
+  }
+
+  function computeBearingUR(a, b){
+    const toRad = d => d*Math.PI/180;
+    const toDeg = r => r*180/Math.PI;
+    const dLon = toRad(b.lng - a.lng);
+    const lat1 = toRad(a.lat), lat2 = toRad(b.lat);
+    const y = Math.sin(dLon)*Math.cos(lat2);
+    const x = Math.cos(lat1)*Math.sin(lat2) - Math.sin(lat1)*Math.cos(lat2)*Math.cos(dLon);
+    return (toDeg(Math.atan2(y,x))+360)%360;
+  }
+
+  // Очищення при видаленні / очищенні
+  function cleanupItem(item){
+    if(!item) return;
+    cleanItemPath(item);
+    if(typeof confirmedTrackLines !== 'undefined' && confirmedTrackLines.has(item.id)){
+      try{ map.removeLayer(confirmedTrackLines.get(item.id)); }catch(e){}
+      confirmedTrackLines.delete(item.id);
+    }
+  }
+
+  const delBtn = document.getElementById('deleteBtn');
+  if(delBtn){
+    const origDel = delBtn.onclick;
+    delBtn.onclick = ()=>{
+      // Одиночне або групове виділення
+      if(typeof selectedItems !== 'undefined' && selectedItems.size > 0){
+        for(const item of selectedItems) cleanupItem(item);
+      } else {
+        cleanupItem(state.selected);
+      }
+      if(origDel) origDel();
+    };
+  }
+  const clrBtn = document.getElementById('clearBtn');
+  if(clrBtn){
+    const origClr = clrBtn.onclick;
+    clrBtn.onclick = ()=>{
+      for(const item of state.items.values()) cleanupItem(item);
+      if(origClr) origClr();
+    };
+  }
+
+}); // end DOMContentLoaded
+</script>
+
+</body>
+</html>
